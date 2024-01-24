@@ -1,0 +1,6 @@
+tests:
+  - command:
+      - $env: SERVERIFY
+    expect:
+      status:
+        eq: 0
