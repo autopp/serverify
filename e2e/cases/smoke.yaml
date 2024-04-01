@@ -1,6 +1,16 @@
 tests:
   - command:
       - $env: SERVERIFY
+      - run
+      - /health
+    background:
+      wait_for:
+        type: http
+        port: 4000
+        path: /health
+        initial_delay: 100ms
+        interval: 1
+        timeout: 10
     expect:
       status:
         eq: 0
