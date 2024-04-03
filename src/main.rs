@@ -1,12 +1,21 @@
 use axum::{self, http::StatusCode, routing::get, Json, Router};
-
+use clap::Parser;
 use tokio::signal;
+
+#[derive(Parser)]
+struct Args {
+    #[clap(long = "port", default_value = "8080")]
+    port: u16,
+}
 
 #[tokio::main]
 async fn main() {
-    let app = Router::new().route("/health", get(health));
+    let args = Args::parse();
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:4000").await.unwrap();
+    let app = Router::new().route("/health", get(health));
+    let listener = tokio::net::TcpListener::bind(("0.0.0.0", args.port))
+        .await
+        .unwrap();
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await

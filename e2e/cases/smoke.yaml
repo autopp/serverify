@@ -1,8 +1,21 @@
 tests:
   - command:
       - $env: SERVERIFY
-      - run
-      - /health
+    background:
+      wait_for:
+        type: http
+        port: 8080
+        path: /health
+        initial_delay: 100ms
+        interval: 1
+        timeout: 10
+    expect:
+      status:
+        eq: 0
+  - command:
+      - $env: SERVERIFY
+      - --port
+      - "4000"
     background:
       wait_for:
         type: http
