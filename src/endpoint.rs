@@ -1,5 +1,4 @@
 use axum::routing::{on, MethodFilter};
-use indexmap::IndexMap;
 
 pub enum Method {
     Get,
@@ -9,15 +8,15 @@ pub enum Method {
     Patch,
 }
 
-pub struct Endpoint {
+pub struct Endpoint<H: IntoIterator<Item = (String, String)> + Clone + Send + Sized + 'static> {
     pub method: Method,
     pub path: String,
     pub status: u16,
-    pub headers: IndexMap<String, String>,
+    pub headers: H,
     pub body: String,
 }
 
-impl Endpoint {
+impl<H: IntoIterator<Item = (String, String)> + Clone + Send + Sized + 'static> Endpoint<H> {
     pub fn route_to(self, app: axum::Router) -> axum::Router {
         let method = match self.method {
             Method::Get => MethodFilter::GET,
@@ -44,11 +43,21 @@ impl Endpoint {
 
 #[cfg(test)]
 mod tests {
+    use std::vec;
+
     use super::*;
 
+    use axum::http::{HeaderMap, HeaderName, HeaderValue};
     use axum_test::TestServer;
 
     use pretty_assertions::assert_eq;
+
+    fn headers(kvs: Vec<(&'static str, &'static str)>) -> HeaderMap {
+        HeaderMap::from_iter(
+            kvs.into_iter()
+                .map(|(k, v)| (HeaderName::from_static(k), HeaderValue::from_static(v))),
+        )
+    }
 
     #[tokio::test]
     async fn test_route_to() {
@@ -57,16 +66,19 @@ mod tests {
             method: Method::Get,
             path: "/".to_string(),
             status: 200,
-            headers: IndexMap::new(),
+            headers: vec![("answer".to_string(), "42".to_string())],
             body: "Hello, world!".to_string(),
         };
 
         let app = endpoint.route_to(app);
-
         let server = TestServer::new(app).unwrap();
         let response = server.get("/").await;
 
-        assert_eq!(response.status_code(), 200);
-        assert_eq!(response.text(), "Hello, world!");
+        assert_eq!(200, response.status_code());
+        assert_eq!("Hello, world!", response.text());
+        assert_eq!(
+            &headers(vec![("content-length", "13"), ("answer", "42")]),
+            response.headers()
+        );
     }
 }
