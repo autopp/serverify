@@ -17,3 +17,4 @@ tokio = { version = "1.35.1", features = ["rt-multi-thread", "signal"] }
 [dev-dependencies]
 axum-test = "14.8.0"
 pretty_assertions = "1.4.0"
+rstest = "0.18.2"

@@ -1,22 +1,31 @@
 use axum::routing::{on, MethodFilter};
+use indexmap::IndexMap;
+use serde::Deserialize;
 
+#[derive(Deserialize, Hash, PartialEq, Eq, Debug)]
 pub enum Method {
+    #[serde(rename = "get")]
     Get,
+    #[serde(rename = "post")]
     Post,
+    #[serde(rename = "put")]
     Put,
+    #[serde(rename = "delete")]
     Delete,
+    #[serde(rename = "patch")]
     Patch,
 }
 
-pub struct Endpoint<H: IntoIterator<Item = (String, String)> + Clone + Send + Sized + 'static> {
+#[derive(PartialEq, Debug)]
+pub struct Endpoint {
     pub method: Method,
     pub path: String,
     pub status: u16,
-    pub headers: H,
+    pub headers: IndexMap<String, String>,
     pub body: String,
 }
 
-impl<H: IntoIterator<Item = (String, String)> + Clone + Send + Sized + 'static> Endpoint<H> {
+impl Endpoint {
     pub fn route_to(self, app: axum::Router) -> axum::Router {
         let method = match self.method {
             Method::Get => MethodFilter::GET,
@@ -50,6 +59,7 @@ mod tests {
     use axum::http::{HeaderMap, HeaderName, HeaderValue};
     use axum_test::TestServer;
 
+    use indexmap::indexmap;
     use pretty_assertions::assert_eq;
 
     fn headers(kvs: Vec<(&'static str, &'static str)>) -> HeaderMap {
@@ -66,7 +76,7 @@ mod tests {
             method: Method::Get,
             path: "/".to_string(),
             status: 200,
-            headers: vec![("answer".to_string(), "42".to_string())],
+            headers: indexmap! { "answer".to_string() => "42".to_string() },
             body: "Hello, world!".to_string(),
         };
 
