@@ -1,18 +1,29 @@
+use std::fs;
+
 use axum::{self, http::StatusCode, routing::get, Json, Router};
 use clap::Parser;
+use serverify::config;
 use tokio::signal;
 
 #[derive(Parser)]
 struct Args {
     #[clap(long = "port", default_value = "8080")]
     port: u16,
+    config_path: String,
 }
 
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
+    let src = fs::read_to_string(args.config_path).unwrap();
+    let endpoints = config::parse_config(&src).unwrap();
 
-    let app = Router::new().route("/health", get(health));
+    let health = Router::new().route("/health", get(health));
+    let mocks = endpoints
+        .into_iter()
+        .fold(Router::new(), |app, endpoint| endpoint.route_to(app));
+    let app = health.nest("/mock/default", mocks);
+
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", args.port))
         .await
         .unwrap();

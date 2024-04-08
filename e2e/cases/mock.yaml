@@ -1,0 +1,36 @@
+tests:
+  - processes:
+      server:
+        command:
+          - $env: SERVERIFY
+          - $tmp_file:
+              filename: serverify.yaml
+              contents:
+                $yaml:
+                  paths:
+                    /hello:
+                      get:
+                        response:
+                          status: 200
+                          body: Hello, World!
+        background:
+          wait_for:
+            type: http
+            port: 8080
+            path: /health
+            initial_delay: 100ms
+            interval: 1
+            timeout: 10
+      request:
+        command:
+          - curl
+          - -w
+          - '\n%{http_code}'
+          - http://localhost:8080/mock/default/hello
+    expect:
+      processes:
+        request:
+          status:
+            eq: 0
+          stdout:
+            eq: "Hello, World!\n200"

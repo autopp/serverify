@@ -1,21 +1,11 @@
 tests:
   - command:
       - $env: SERVERIFY
-    background:
-      wait_for:
-        type: http
-        port: 8080
-        path: /health
-        initial_delay: 100ms
-        interval: 1
-        timeout: 10
-    expect:
-      status:
-        eq: 0
-  - command:
-      - $env: SERVERIFY
       - --port
       - "4000"
+      - $tmp_file:
+          filename: serverify.yaml
+          contents: 'paths: {}'
     background:
       wait_for:
         type: http
