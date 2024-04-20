@@ -1,8 +1,11 @@
-use std::fs;
+use std::{fs, sync::Arc};
 
 use axum::{self, http::StatusCode, routing::get, Json, Router};
 use clap::Parser;
-use serverify::config;
+use serverify::{
+    config,
+    endpoint::{PathPrefix, SharedState},
+};
 use tokio::signal;
 
 #[derive(Parser)]
@@ -18,15 +21,19 @@ async fn main() {
     let src = fs::read_to_string(args.config_path).unwrap();
     let endpoints = config::parse_config(&src).unwrap();
 
+    let shared_state = SharedState::default();
     let health = Router::new().route("/health", get(health));
+    let mock_prefix = PathPrefix::new("/mock/:serverify_session").unwrap();
     let mocks = endpoints
         .into_iter()
-        .fold(Router::new(), |app, endpoint| endpoint.route_to(app));
-    let app = health.nest("/mock/:serverify_session", mocks);
+        .fold(health, |app, endpoint| endpoint.route_to(app, &mock_prefix));
+
+    let app = mocks.with_state(Arc::clone(&shared_state));
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", args.port))
         .await
         .unwrap();
+
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await
