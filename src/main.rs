@@ -22,7 +22,7 @@ async fn main() {
     let mocks = endpoints
         .into_iter()
         .fold(Router::new(), |app, endpoint| endpoint.route_to(app));
-    let app = health.nest("/mock/default", mocks);
+    let app = health.nest("/mock/:serverify_session", mocks);
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", args.port))
         .await
