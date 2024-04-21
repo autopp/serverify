@@ -14,7 +14,7 @@ use tokio_util::io::StreamReader;
 
 use crate::{history::History, state::SharedState};
 
-#[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Debug)]
+#[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Debug, Clone)]
 pub enum Method {
     #[serde(rename = "get")]
     Get,
@@ -77,7 +77,7 @@ impl MockEndpoint {
                         .collect();
                     let path = parts.uri.path().to_string();
 
-                    let Query(queries) =
+                    let Query(query) =
                         Query::<IndexMap<String, String>>::try_from_uri(&parts.uri).unwrap(); // TODO: handle error
 
                     let mut stream = StreamReader::new(
@@ -91,7 +91,7 @@ impl MockEndpoint {
                         method,
                         headers,
                         path,
-                        queries,
+                        query,
                         body: String::from_utf8_lossy(&buf).to_string(),
                     };
 
@@ -185,7 +185,7 @@ mod tests {
                         ("token".to_string(), "abc".to_string()),
                     ],
                     path: "/hello".to_string(),
-                    queries: indexmap! {
+                    query: indexmap! {
                         "foo".to_string() => "x".to_string(),
                         "bar".to_string() => "y".to_string()
                     },

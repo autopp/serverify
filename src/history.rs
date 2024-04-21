@@ -3,11 +3,11 @@ use serde::Serialize;
 
 use crate::mock_endpoint::Method;
 
-#[derive(Serialize, PartialEq, Debug)]
+#[derive(Serialize, PartialEq, Debug, Clone)]
 pub struct History {
     pub method: Method,
     pub headers: Vec<(String, String)>,
     pub path: String,
-    pub queries: IndexMap<String, String>,
+    pub query: IndexMap<String, String>,
     pub body: String,
 }
