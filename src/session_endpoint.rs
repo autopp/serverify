@@ -1,20 +1,21 @@
 use axum::{
-    extract::{Json, State},
+    extract::{Json, Path, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::post,
+    routing::{get, post},
     Router,
 };
 use once_cell::sync::Lazy;
 use regex::Regex;
 
 use crate::{
-    response::{error_response, success_response},
+    response::{error_response, success_response, WithError},
     state::SharedState,
 };
 
 pub fn route_session_to(app: Router<SharedState>) -> Router<SharedState> {
     app.route("/session", post(create_session))
+        .route("/session/:session", get(get_session))
 }
 
 #[derive(serde::Deserialize)]
@@ -51,6 +52,30 @@ async fn create_session(
 
     sessions.insert(session.clone(), vec![]);
     success_response(StatusCode::CREATED, CreateResBody { session })
+}
+
+#[derive(serde::Serialize)]
+struct GetResBody {
+    histories: Vec<crate::history::History>,
+}
+
+async fn get_session(
+    State(state): State<SharedState>,
+    Path(session): Path<String>,
+) -> (StatusCode, Json<WithError<GetResBody>>) {
+    let sessions = &state.read().unwrap().sessions;
+    match sessions.get(&session) {
+        Some(history) => success_response(
+            StatusCode::OK,
+            GetResBody {
+                histories: history.clone(),
+            },
+        ),
+        None => error_response(
+            StatusCode::NOT_FOUND,
+            format!("session {} is not found", session),
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -131,6 +156,61 @@ mod tests {
 
         assert_eq!(
             expected_sessions,
+            state.read().unwrap().sessions,
+            "{}: state",
+            title
+        );
+    }
+
+    #[rstest]
+    #[tokio::test]
+    #[case(
+        "success case",
+        "exist_session",
+        StatusCode::OK,
+        json!({
+            "histories": [
+                {
+                    "method": "post",
+                    "path": "/greet",
+                    "headers": [
+                        ["token", "abc"]
+                    ],
+                    "query": {"answer": "42" },
+                    "body": r#"{"message":"hello"}"#
+                }
+            ]
+        }),
+
+    )]
+    #[tokio::test]
+    #[case(
+        "session dose not exist",
+        "undefined_session",
+        StatusCode::NOT_FOUND,
+        json!({ "serverify_error": { "message": "session undefined_session is not found" } }),
+    )]
+    async fn get_session(
+        #[case] title: &str,
+        #[case] session: &str,
+        #[case] expected_status_code: StatusCode,
+        #[case] expected_res_body: Value,
+    ) {
+        let state = new_state_with(initial_sessions());
+        let app = route_session_to(Router::new()).with_state(Arc::clone(&state));
+        let server = TestServer::new(app).unwrap();
+
+        let response = server.get(&format!("/session/{}", session)).await;
+
+        assert_eq!(
+            (expected_status_code, expected_res_body),
+            (response.status_code(), response.json()),
+            "{}: response",
+            title
+        );
+
+        assert_eq!(
+            initial_sessions(),
             state.read().unwrap().sessions,
             "{}: state",
             title
