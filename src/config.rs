@@ -1,7 +1,7 @@
 use indexmap::IndexMap;
 use serde::Deserialize;
 
-use crate::endpoint::{Endpoint, Method};
+use crate::mock_endpoint::{Method, MockEndpoint};
 
 #[derive(Deserialize)]
 struct Config {
@@ -20,7 +20,7 @@ struct ResponseConfig {
     pub body: String,
 }
 
-pub fn parse_config(src: &str) -> Result<Vec<Endpoint>, String> {
+pub fn parse_config(src: &str) -> Result<Vec<MockEndpoint>, String> {
     serde_yaml::from_str::<Config>(src)
         .map_err(|e| e.to_string())
         .map(|config| {
@@ -28,13 +28,15 @@ pub fn parse_config(src: &str) -> Result<Vec<Endpoint>, String> {
                 .paths
                 .into_iter()
                 .flat_map(|(path, methods)| {
-                    methods.into_iter().map(move |(method, endpoint)| Endpoint {
-                        method,
-                        path: path.clone(),
-                        status: endpoint.response.status,
-                        headers: endpoint.response.headers.unwrap_or_default(),
-                        body: endpoint.response.body,
-                    })
+                    methods
+                        .into_iter()
+                        .map(move |(method, endpoint)| MockEndpoint {
+                            method,
+                            path: path.clone(),
+                            status: endpoint.response.status,
+                            headers: endpoint.response.headers.unwrap_or_default(),
+                            body: endpoint.response.body,
+                        })
                 })
                 .collect()
         })
@@ -69,21 +71,21 @@ paths:
                     Content-Type: text/plain
                 body: "Goodbye, world!"
     "#, Ok(vec![
-        Endpoint {
+        MockEndpoint {
             method: Method::Get,
             path: "/hello".to_string(),
             status: 200,
             headers: indexmap! { "Content-Type".to_string() => "text/plain".to_string() },
             body: "Hello, world!".to_string(),
         },
-        Endpoint {
+        MockEndpoint {
             method: Method::Post,
             path: "/hello".to_string(),
             status: 204,
             headers: indexmap! {},
             body: "".to_string(),
         },
-        Endpoint {
+        MockEndpoint {
             method: Method::Get,
             path: "/goodbye".to_string(),
             status: 200,
@@ -91,7 +93,7 @@ paths:
             body: "Goodbye, world!".to_string(),
         },
     ]))]
-    fn test_parse_config(#[case] src: &str, #[case] expected: Result<Vec<Endpoint>, String>) {
+    fn test_parse_config(#[case] src: &str, #[case] expected: Result<Vec<MockEndpoint>, String>) {
         assert_eq!(expected, parse_config(src));
     }
 }

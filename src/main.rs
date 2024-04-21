@@ -2,10 +2,7 @@ use std::{fs, sync::Arc};
 
 use axum::{self, http::StatusCode, routing::get, Json, Router};
 use clap::Parser;
-use serverify::{
-    config,
-    endpoint::{PathPrefix, SharedState},
-};
+use serverify::{config, state::SharedState};
 use tokio::signal;
 
 #[derive(Parser)]
@@ -23,10 +20,9 @@ async fn main() {
 
     let shared_state = SharedState::default();
     let health = Router::new().route("/health", get(health));
-    let mock_prefix = PathPrefix::new("/mock/:serverify_session").unwrap();
     let mocks = endpoints
         .into_iter()
-        .fold(health, |app, endpoint| endpoint.route_to(app, &mock_prefix));
+        .fold(health, |app, endpoint| endpoint.route_to(app));
 
     let app = mocks.with_state(Arc::clone(&shared_state));
 

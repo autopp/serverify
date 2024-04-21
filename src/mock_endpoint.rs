@@ -1,7 +1,4 @@
-use std::{
-    io::ErrorKind,
-    sync::{Arc, RwLock},
-};
+use std::io::ErrorKind;
 
 use axum::{
     body::Body,
@@ -15,14 +12,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 use tokio_util::io::StreamReader;
 
-use crate::history::History;
-
-#[derive(Default)]
-pub struct AppState {
-    pub sessions: IndexMap<String, Vec<History>>,
-}
-
-pub type SharedState = Arc<RwLock<AppState>>;
+use crate::{history::History, state::SharedState};
 
 #[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Debug)]
 pub enum Method {
@@ -39,7 +29,7 @@ pub enum Method {
 }
 
 #[derive(PartialEq, Debug)]
-pub struct Endpoint {
+pub struct MockEndpoint {
     pub method: Method,
     pub path: String,
     pub status: u16,
@@ -47,29 +37,13 @@ pub struct Endpoint {
     pub body: String,
 }
 
-pub struct PathPrefix<'a>(&'a str);
-
-impl<'a> PathPrefix<'a> {
-    pub fn new(prefix: &'a str) -> Result<Self, String> {
-        if prefix.ends_with("/:serverify_session") || prefix.contains("/:serverify_session/") {
-            Ok(Self(prefix))
-        } else {
-            Err("Prefix must start with a slash".to_string())
-        }
-    }
-}
-
 #[derive(Deserialize)]
 struct PathParams {
     serverify_session: String,
 }
 
-impl Endpoint {
-    pub fn route_to(
-        self,
-        app: axum::Router<SharedState>,
-        PathPrefix(prefix): &PathPrefix,
-    ) -> axum::Router<SharedState> {
+impl MockEndpoint {
+    pub fn route_to(self, app: axum::Router<SharedState>) -> axum::Router<SharedState> {
         let method = match self.method {
             Method::Get => MethodFilter::GET,
             Method::Post => MethodFilter::POST,
@@ -138,13 +112,16 @@ impl Endpoint {
             },
         );
 
-        app.nest(prefix, Router::new().route(&self.path, route))
+        app.nest(
+            "/mock/:serverify_session",
+            Router::new().route(&self.path, route),
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::vec;
+    use std::{sync::Arc, vec};
 
     use super::*;
 
@@ -164,7 +141,7 @@ mod tests {
     #[tokio::test]
     async fn route_to() {
         let app = axum::Router::new();
-        let endpoint = Endpoint {
+        let endpoint = MockEndpoint {
             method: Method::Post,
             path: "/hello".to_string(),
             status: 200,
@@ -177,11 +154,8 @@ mod tests {
             let sessions = &mut shared_state.write().unwrap().sessions;
             sessions.insert("123".to_string(), vec![]);
         };
-        let path_prefix = PathPrefix::new("/mock/:serverify_session").unwrap();
 
-        let app = endpoint
-            .route_to(app, &path_prefix)
-            .with_state(Arc::clone(&shared_state));
+        let app = endpoint.route_to(app).with_state(Arc::clone(&shared_state));
         let server = TestServer::new(app).unwrap();
         let response = server
             .post("/mock/123/hello")
