@@ -96,7 +96,7 @@ impl MockEndpoint {
                     };
 
                     let sessions = &mut state.write().unwrap().sessions;
-                    let session = sessions.get_mut(&"123".to_string()).unwrap();
+                    let session = sessions.get_mut(&serverify_session).unwrap(); // TODO: handle error
                     session.push(history);
                 }
 

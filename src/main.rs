@@ -2,7 +2,7 @@ use std::{fs, sync::Arc};
 
 use axum::{self, http::StatusCode, routing::get, Json, Router};
 use clap::Parser;
-use serverify::{config, state::SharedState};
+use serverify::{config, session_endpoint::route_session_to, state::SharedState};
 use tokio::signal;
 
 #[derive(Parser)]
@@ -24,7 +24,7 @@ async fn main() {
         .into_iter()
         .fold(health, |app, endpoint| endpoint.route_to(app));
 
-    let app = mocks.with_state(Arc::clone(&shared_state));
+    let app = route_session_to(mocks).with_state(Arc::clone(&shared_state));
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", args.port))
         .await

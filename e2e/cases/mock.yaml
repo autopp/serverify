@@ -1,5 +1,6 @@
 tests:
-  - processes:
+  - name: request to default session
+    processes:
       server:
         command:
           - $env: SERVERIFY
@@ -34,3 +35,91 @@ tests:
             eq: 0
           stdout:
             eq: "Hello, World!\n200"
+  - name: create new session
+    processes:
+      server:
+        command:
+          - $env: SERVERIFY
+          - $tmp_file:
+              filename: serverify.yaml
+              contents:
+                $yaml:
+                  paths:
+                    /hello:
+                      get:
+                        response:
+                          status: 200
+                          body: Hello, World!
+        background:
+          wait_for:
+            type: http
+            port: 8080
+            path: /health
+            initial_delay: 100ms
+            interval: 1
+            timeout: 10
+      create:
+        command:
+          - curl
+          - -s
+          - -X
+          - POST
+          - http://localhost:8080/session
+          - -H
+          - 'Content-Type: application/json'
+          - -d
+          - $json:
+              session: "mysession"
+          - -o
+          - /dev/fd/2
+          - -w
+          - '%{http_code}'
+      request:
+        command:
+          - curl
+          - -s
+          - -w
+          - '\n%{http_code}'
+          - http://localhost:8080/mock/mysession/hello
+      history:
+        command:
+          - curl
+          - -s
+          - -o
+          - /dev/fd/2
+          - -w
+          - '%{http_code}'
+          - http://localhost:8080/session/mysession
+    expect:
+      processes:
+        create:
+          status:
+            eq: 0
+          stdout:
+            eq: "201"
+          stderr:
+            eq_json:
+              $json:
+                session: "mysession"
+        request:
+          status:
+            eq: 0
+          stdout:
+            eq: "Hello, World!\n200"
+        history:
+          status:
+            eq: 0
+          stdout:
+            eq: "200"
+          stderr:
+            eq_json:
+              $json:
+                histories:
+                  - path: /hello
+                    method: get
+                    query: {}
+                    headers:
+                      - ["host", "localhost:8080"]
+                      - ["user-agent", "curl/8.4.0"]
+                      - ["accept", "*/*"]
+                    body: ""

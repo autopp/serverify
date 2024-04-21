@@ -2,7 +2,7 @@ use axum::{
     extract::{Json, Path, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{get, post},
+    routing::{delete, get, post},
     Router,
 };
 use once_cell::sync::Lazy;
@@ -16,6 +16,7 @@ use crate::{
 pub fn route_session_to(app: Router<SharedState>) -> Router<SharedState> {
     app.route("/session", post(create_session))
         .route("/session/:session", get(get_session))
+        .route("/session/:session", delete(delete_session))
 }
 
 #[derive(serde::Deserialize)]
@@ -71,6 +72,25 @@ async fn get_session(
                 histories: history.clone(),
             },
         ),
+        None => error_response(
+            StatusCode::NOT_FOUND,
+            format!("session {} is not found", session),
+        ),
+    }
+}
+
+#[derive(serde::Serialize)]
+struct DeleteResBody {
+    session: String,
+}
+
+async fn delete_session(
+    State(state): State<SharedState>,
+    Path(session): Path<String>,
+) -> impl IntoResponse {
+    let sessions = &mut state.write().unwrap().sessions;
+    match sessions.shift_remove(&session) {
+        Some(_) => success_response(StatusCode::OK, DeleteResBody { session }),
         None => error_response(
             StatusCode::NOT_FOUND,
             format!("session {} is not found", session),
@@ -211,6 +231,55 @@ mod tests {
 
         assert_eq!(
             initial_sessions(),
+            state.read().unwrap().sessions,
+            "{}: state",
+            title
+        );
+    }
+
+    #[rstest]
+    #[tokio::test]
+    #[case(
+        "success case",
+        "exist_session",
+        StatusCode::OK,
+        json!({ "session": "exist_session" }),
+        {
+            let mut sessions = initial_sessions();
+            sessions.shift_remove(&"exist_session".to_string());
+            sessions
+        },
+    )]
+    #[tokio::test]
+    #[case(
+        "session is not found",
+        "undefined_session",
+        StatusCode::NOT_FOUND,
+        json!({ "serverify_error": { "message": "session undefined_session is not found" } }),
+        initial_sessions()
+    )]
+    async fn delete_session(
+        #[case] title: &str,
+        #[case] session: &str,
+        #[case] expected_status_code: StatusCode,
+        #[case] expected_res_body: Value,
+        #[case] expected_sessions: IndexMap<String, Vec<History>>,
+    ) {
+        let state = new_state_with(initial_sessions());
+        let app = route_session_to(Router::new()).with_state(Arc::clone(&state));
+        let server = TestServer::new(app).unwrap();
+
+        let response = server.delete(&format!("/session/{}", session)).await;
+
+        assert_eq!(
+            (expected_status_code, expected_res_body),
+            (response.status_code(), response.json()),
+            "{}: response",
+            title
+        );
+
+        assert_eq!(
+            expected_sessions,
             state.read().unwrap().sessions,
             "{}: state",
             title
