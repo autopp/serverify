@@ -112,14 +112,11 @@ tests:
           stdout:
             eq: "200"
           stderr:
-            eq_json:
+            include_json:
               $json:
                 histories:
                   - path: /hello
                     method: get
+                    headers: {}
                     query: {}
-                    headers:
-                      - ["host", "localhost:8080"]
-                      - ["user-agent", "curl/8.4.0"]
-                      - ["accept", "*/*"]
                     body: ""

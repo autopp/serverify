@@ -116,7 +116,9 @@ mod tests {
             "exist_session".to_string() => vec![History {
                 method: Method::Post,
                 path: "/greet".to_string(),
-                headers: vec![("token".to_string(), "abc".to_string())],
+                headers: indexmap! {
+                    "token".to_string() => "abc".to_string()
+                },
                 query: indexmap! {
                     "answer".to_string() => "42".to_string(),
                 },
@@ -193,9 +195,9 @@ mod tests {
                 {
                     "method": "post",
                     "path": "/greet",
-                    "headers": [
-                        ["token", "abc"]
-                    ],
+                    "headers": {
+                        "token": "abc"
+                    },
                     "query": {"answer": "42" },
                     "body": r#"{"message":"hello"}"#
                 }

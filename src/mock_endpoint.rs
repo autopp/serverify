@@ -180,10 +180,10 @@ mod tests {
             &indexmap! {
                 "123".to_string() => vec![History {
                     method: Method::Post,
-                    headers: vec![
-                        ("content-type".to_string(), "text/plain".to_string()),
-                        ("token".to_string(), "abc".to_string()),
-                    ],
+                    headers: indexmap! {
+                        "content-type".to_string() => "text/plain".to_string(),
+                        "token".to_string() => "abc".to_string(),
+                    },
                     path: "/hello".to_string(),
                     query: indexmap! {
                         "foo".to_string() => "x".to_string(),
