@@ -185,24 +185,40 @@ impl RequestLogger {
             })?;
 
         // Insert request_header
-        for (name, value) in &log.headers {
-            sqlx::query(
-                "INSERT INTO request_header (request_log_id, name, value) VALUES (?, ?, ?)",
-            )
-            .bind(request_log_id)
-            .bind(name.as_str())
-            .bind(value.as_str())
-            .execute(&mut *tx)
-            .await
-            .map_err(|err| LoggerError::InternalError(err.to_string()))?;
+        if !log.headers.is_empty() {
+            let prepared = format!(
+                "INSERT INTO request_header (request_log_id, name, value) VALUES {}",
+                vec!["(?, ?, ?)"; log.headers.len()].join(", ")
+            );
+
+            log.headers
+                .iter()
+                .fold(sqlx::query(&prepared), |query, (name, value)| {
+                    query
+                        .bind(request_log_id)
+                        .bind(name.as_str())
+                        .bind(value.as_str())
+                })
+                .execute(&mut *tx)
+                .await
+                .map_err(|err| LoggerError::InternalError(err.to_string()))?;
         }
 
         // Insert request_query
-        for (name, value) in &log.query {
-            sqlx::query("INSERT INTO request_query (request_log_id, name, value) VALUES (?, ?, ?)")
-                .bind(request_log_id)
-                .bind(name.as_str())
-                .bind(value.as_str())
+        if !log.query.is_empty() {
+            let prepared = format!(
+                "INSERT INTO request_query (request_log_id, name, value) VALUES {}",
+                vec!["(?, ?, ?)"; log.query.len()].join(", ")
+            );
+
+            log.query
+                .iter()
+                .fold(sqlx::query(&prepared), |query, (name, value)| {
+                    query
+                        .bind(request_log_id)
+                        .bind(name.as_str())
+                        .bind(value.as_str())
+                })
                 .execute(&mut *tx)
                 .await
                 .map_err(|err| LoggerError::InternalError(err.to_string()))?;
