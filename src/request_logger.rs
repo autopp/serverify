@@ -3,7 +3,7 @@ use std::fmt::Display;
 use chrono::{DateTime, Local};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use sqlx::{prelude::FromRow, SqlitePool};
+use sqlx::{error::ErrorKind, prelude::FromRow, SqlitePool};
 
 #[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Debug, Clone)]
 pub enum Method {
@@ -159,6 +159,8 @@ impl RequestLogger {
     }
 
     pub async fn log_request(&self, session: &str, log: &RequestLog) -> LoggerResult<()> {
+        // FIXME: remove .unwrap()
+
         let mut tx = self
             .pool
             .begin()
@@ -173,9 +175,18 @@ impl RequestLogger {
             .bind(log.body.as_str())
             .bind(log.requested_at)
             .execute(&mut *tx)
-            .await.unwrap();
+            .await;
 
-        let request_log_id = qr.last_insert_rowid();
+        if let Err(err) = qr {
+            return match err.as_database_error() {
+                Some(derr) if derr.kind() == ErrorKind::NotNullViolation => Err(
+                    LoggerError::InvalidSession(format!("session \"{}\" is not found", session)),
+                ),
+                _ => Err(LoggerError::InternalError(err.to_string())),
+            };
+        }
+
+        let request_log_id = qr.unwrap().last_insert_rowid();
 
         // Insert request_header
         for (name, value) in &log.headers {
@@ -206,6 +217,8 @@ impl RequestLogger {
     }
 
     pub async fn get_session_history(&self, session: &str) -> LoggerResult<Vec<RequestLog>> {
+        // FIXME: remove .unwrap()
+
         #[derive(FromRow)]
         struct SeesionRow {
             id: i64,
@@ -447,8 +460,42 @@ mod tests {
             logger.log_request(another_session, &log3).await.unwrap();
 
             assert_eq!(
+                Ok(vec![log1, log2]),
                 logger.get_session_history(DEFAULT_SESSION).await,
-                Ok(vec![log1, log2])
+            );
+        }
+
+        #[tokio::test]
+        async fn when_no_requests_are_logged() {
+            let logger = new_logger().await;
+
+            assert_eq!(
+                Ok(vec![]),
+                logger.get_session_history(DEFAULT_SESSION).await,
+            );
+        }
+
+        #[tokio::test]
+        async fn when_unknown_session_is_passed_to_log_request() {
+            let logger = new_logger().await;
+
+            assert_eq!(
+                Err(LoggerError::InvalidSession(
+                    "session \"unknown_session\" is not found".to_string()
+                )),
+                logger
+                    .log_request(
+                        "unknown_session",
+                        &RequestLog {
+                            method: Method::Get,
+                            headers: IndexMap::new(),
+                            path: "/hello".to_string(),
+                            query: IndexMap::new(),
+                            body: "".to_string(),
+                            requested_at: Local::now(),
+                        }
+                    )
+                    .await,
             );
         }
     }
