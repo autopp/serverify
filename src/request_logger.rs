@@ -159,8 +159,6 @@ impl RequestLogger {
     }
 
     pub async fn log_request(&self, session: &str, log: &RequestLog) -> LoggerResult<()> {
-        // FIXME: remove .unwrap()
-
         let mut tx = self
             .pool
             .begin()
@@ -168,25 +166,23 @@ impl RequestLogger {
             .map_err(|err| LoggerError::InternalError(err.to_string()))?;
 
         // Insert request_log
-        let qr = sqlx::query("INSERT INTO request_log (session_id, method, path, body, requested_at) VALUES ((SELECT id FROM session WHERE name = ?), ?, ?, ?, ?)")
+        let request_log_id = sqlx::query("INSERT INTO request_log (session_id, method, path, body, requested_at) VALUES ((SELECT id FROM session WHERE name = ?), ?, ?, ?, ?)")
             .bind(session)
             .bind(log.method.to_string())
             .bind(log.path.as_str())
             .bind(log.body.as_str())
             .bind(log.requested_at)
             .execute(&mut *tx)
-            .await;
-
-        if let Err(err) = qr {
-            return match err.as_database_error() {
-                Some(derr) if derr.kind() == ErrorKind::NotNullViolation => Err(
-                    LoggerError::InvalidSession(format!("session \"{}\" is not found", session)),
-                ),
-                _ => Err(LoggerError::InternalError(err.to_string())),
-            };
-        }
-
-        let request_log_id = qr.unwrap().last_insert_rowid();
+            .await
+            .map(|qr| qr.last_insert_rowid())
+            .map_err(|err| {
+                match err.as_database_error() {
+                    Some(derr) if derr.kind() == ErrorKind::NotNullViolation =>
+                        LoggerError::InvalidSession(format!("session \"{}\" is not found", session),
+                    ),
+                    _ => LoggerError::InternalError(err.to_string()),
+                }
+            })?;
 
         // Insert request_header
         for (name, value) in &log.headers {
@@ -198,7 +194,7 @@ impl RequestLogger {
             .bind(value.as_str())
             .execute(&mut *tx)
             .await
-            .unwrap();
+            .map_err(|err| LoggerError::InternalError(err.to_string()))?;
         }
 
         // Insert request_query
@@ -209,16 +205,16 @@ impl RequestLogger {
                 .bind(value.as_str())
                 .execute(&mut *tx)
                 .await
-                .unwrap();
+                .map_err(|err| LoggerError::InternalError(err.to_string()))?;
         }
 
-        tx.commit().await.unwrap();
+        tx.commit()
+            .await
+            .map_err(|err| LoggerError::InternalError(err.to_string()))?;
         Ok(())
     }
 
     pub async fn get_session_history(&self, session: &str) -> LoggerResult<Vec<RequestLog>> {
-        // FIXME: remove .unwrap()
-
         #[derive(FromRow)]
         struct SessionRow {
             id: i64,
@@ -265,11 +261,11 @@ impl RequestLogger {
         .bind(session_id)
         .fetch_all(&self.pool)
         .await
-        .unwrap();
+        .map_err(|err| LoggerError::InternalError(err.to_string()))?;
 
         let all_headers: Vec<RequestHeaderRow> = sqlx::query_as(
             "SELECT request_log_id, name, value FROM request_header LEFT JOIN request_log ON request_log.id = request_header.request_log_id WHERE request_log.session_id = ?",
-        ).bind(session_id).fetch_all(&self.pool).await.unwrap();
+        ).bind(session_id).fetch_all(&self.pool).await.map_err(|err| LoggerError::InternalError(err.to_string()))?;
 
         let headers: IndexMap<i64, Vec<RequestHeaderRow>> =
             all_headers
@@ -281,7 +277,7 @@ impl RequestLogger {
 
         let all_queries: Vec<RequestQueryRow> = sqlx::query_as(
             "SELECT request_log_id, name, value FROM request_query LEFT JOIN request_log ON request_log.id = request_query.request_log_id WHERE request_log.session_id = ?",
-        ).bind(session_id).fetch_all(&self.pool).await.unwrap();
+        ).bind(session_id).fetch_all(&self.pool).await.map_err(|err| LoggerError::InternalError(err.to_string()))?;
 
         let queries: IndexMap<i64, Vec<RequestQueryRow>> =
             all_queries
@@ -291,8 +287,7 @@ impl RequestLogger {
                     acc
                 });
 
-        Ok(logs
-            .into_iter()
+        logs.into_iter()
             .map(|log| {
                 let headers = headers
                     .get(&log.id)
@@ -312,16 +307,20 @@ impl RequestLogger {
                     })
                     .unwrap_or_default();
 
-                RequestLog {
-                    method: log.method.as_str().try_into().unwrap(),
-                    headers,
-                    path: log.path,
-                    query: queries,
-                    body: log.body,
-                    requested_at: log.requested_at,
-                }
+                log.method
+                    .as_str()
+                    .try_into()
+                    .map_err(|err: String| LoggerError::InternalError(err))
+                    .map(|method| RequestLog {
+                        method,
+                        headers,
+                        path: log.path,
+                        query: queries,
+                        body: log.body,
+                        requested_at: log.requested_at,
+                    })
             })
-            .collect())
+            .collect::<Result<Vec<_>, _>>()
     }
 }
 
