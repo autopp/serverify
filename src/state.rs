@@ -5,11 +5,11 @@ use indexmap::IndexMap;
 use crate::history::History;
 
 #[derive(Default)]
-pub struct AppState {
+pub struct AppStateOld {
     pub sessions: IndexMap<String, Vec<History>>,
 }
 
-pub type SharedState = Arc<RwLock<AppState>>;
+pub type SharedState = Arc<RwLock<AppStateOld>>;
 
 #[cfg(test)]
 pub mod testutil {
