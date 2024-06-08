@@ -1,13 +1,9 @@
-use std::time::Instant;
+use std::fmt::Display;
 
-use axum::{
-    body::Body,
-    extract::{FromRequest, Request},
-};
 use chrono::{DateTime, Local};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
+use sqlx::{prelude::FromRow, SqlitePool};
 
 #[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Debug, Clone)]
 pub enum Method {
@@ -21,6 +17,33 @@ pub enum Method {
     Delete,
     #[serde(rename = "patch")]
     Patch,
+}
+
+impl Display for Method {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Method::Get => write!(f, "get"),
+            Method::Post => write!(f, "post"),
+            Method::Put => write!(f, "put"),
+            Method::Delete => write!(f, "delete"),
+            Method::Patch => write!(f, "patch"),
+        }
+    }
+}
+
+impl TryFrom<&str> for Method {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "get" => Ok(Method::Get),
+            "post" => Ok(Method::Post),
+            "put" => Ok(Method::Put),
+            "delete" => Ok(Method::Delete),
+            "patch" => Ok(Method::Patch),
+            _ => Err(format!("unknown method: {}", value)),
+        }
+    }
 }
 
 #[derive(Serialize, PartialEq, Debug, Clone)]
@@ -136,11 +159,153 @@ impl RequestLogger {
     }
 
     pub async fn log_request(&self, session: &str, log: &RequestLog) -> LoggerResult<()> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| LoggerError::InternalError(err.to_string()))?;
+
+        // Insert request_log
+        let qr = sqlx::query("INSERT INTO request_log (session_id, method, path, body, requested_at) VALUES ((SELECT id FROM session WHERE name = ?), ?, ?, ?, ?)")
+            .bind(session)
+            .bind(log.method.to_string())
+            .bind(log.path.as_str())
+            .bind(log.body.as_str())
+            .bind(log.requested_at)
+            .execute(&mut *tx)
+            .await.unwrap();
+
+        let request_log_id = qr.last_insert_rowid();
+
+        // Insert request_header
+        for (name, value) in &log.headers {
+            sqlx::query(
+                "INSERT INTO request_header (request_log_id, name, value) VALUES (?, ?, ?)",
+            )
+            .bind(request_log_id)
+            .bind(name.as_str())
+            .bind(value.as_str())
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        }
+
+        // Insert request_query
+        for (name, value) in &log.query {
+            sqlx::query("INSERT INTO request_query (request_log_id, name, value) VALUES (?, ?, ?)")
+                .bind(request_log_id)
+                .bind(name.as_str())
+                .bind(value.as_str())
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+        }
+
+        tx.commit().await.unwrap();
         Ok(())
     }
 
     pub async fn get_session_history(&self, session: &str) -> LoggerResult<Vec<RequestLog>> {
-        unimplemented!();
+        #[derive(FromRow)]
+        struct SeesionRow {
+            id: i64,
+        }
+
+        #[derive(FromRow)]
+        struct RequestLogRow {
+            id: i64,
+            method: String,
+            path: String,
+            body: String,
+            requested_at: DateTime<Local>,
+        }
+
+        #[derive(FromRow)]
+        struct RequestHeaderRow {
+            request_log_id: i64,
+            name: String,
+            value: String,
+        }
+
+        #[derive(FromRow)]
+        struct RequestQueryRow {
+            request_log_id: i64,
+            name: String,
+            value: String,
+        }
+
+        let session: SeesionRow = sqlx::query_as("SELECT id FROM session WHERE name = ?")
+            .bind(session)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|err| LoggerError::InternalError(err.to_string()))
+            .unwrap();
+
+        let session_id = session.id;
+
+        let logs: Vec<RequestLogRow> = sqlx::query_as(
+            "SELECT id, method, path, body, requested_at FROM request_log WHERE session_id = ?",
+        )
+        .bind(session_id)
+        .fetch_all(&self.pool)
+        .await
+        .unwrap();
+
+        let all_headers: Vec<RequestHeaderRow> = sqlx::query_as(
+            "SELECT request_log_id, name, value FROM request_header LEFT JOIN request_log ON request_log.id = request_header.request_log_id WHERE request_log.session_id = ?",
+        ).bind(session_id).fetch_all(&self.pool).await.unwrap();
+
+        let headers: IndexMap<i64, Vec<RequestHeaderRow>> =
+            all_headers
+                .into_iter()
+                .fold(IndexMap::new(), |mut acc, row| {
+                    acc.entry(row.request_log_id).or_default().push(row);
+                    acc
+                });
+
+        let all_queries: Vec<RequestQueryRow> = sqlx::query_as(
+            "SELECT request_log_id, name, value FROM request_query LEFT JOIN request_log ON request_log.id = request_query.request_log_id WHERE request_log.session_id = ?",
+        ).bind(session_id).fetch_all(&self.pool).await.unwrap();
+
+        let queries: IndexMap<i64, Vec<RequestQueryRow>> =
+            all_queries
+                .into_iter()
+                .fold(IndexMap::new(), |mut acc, row| {
+                    acc.entry(row.request_log_id).or_default().push(row);
+                    acc
+                });
+
+        Ok(logs
+            .into_iter()
+            .map(|log| {
+                let headers = headers
+                    .get(&log.id)
+                    .map(|rows| {
+                        rows.iter()
+                            .map(|row| (row.name.clone(), row.value.clone()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                let queries = queries
+                    .get(&log.id)
+                    .map(|rows| {
+                        rows.iter()
+                            .map(|row| (row.name.clone(), row.value.clone()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                RequestLog {
+                    method: log.method.as_str().try_into().unwrap(),
+                    headers,
+                    path: log.path,
+                    query: queries,
+                    body: log.body,
+                    requested_at: log.requested_at,
+                }
+            })
+            .collect())
     }
 }
 
@@ -202,6 +367,88 @@ mod tests {
                 Err(LoggerError::InvalidSession(
                     "session \"new_session\" is not found".to_string()
                 ))
+            );
+        }
+    }
+
+    mod log_request_and_get_session_history {
+        use super::*;
+        use chrono::NaiveDate;
+        use chrono::TimeZone;
+        use indexmap::indexmap;
+        use pretty_assertions::assert_eq;
+
+        #[tokio::test]
+        async fn when_two_requests_are_logged() {
+            let log1_requested_at = Local
+                .from_local_datetime(
+                    &NaiveDate::from_ymd_opt(2024, 1, 2)
+                        .unwrap()
+                        .and_hms_opt(3, 4, 5)
+                        .unwrap(),
+                )
+                .unwrap();
+            let log1 = RequestLog {
+                method: Method::Get,
+                headers: IndexMap::new(),
+                path: "/hello".to_string(),
+                query: indexmap! {
+                    "qname1".to_string() => "qvalue1".to_string(),
+                    "qname2".to_string() => "qvalue2".to_string(),
+                },
+                body: "".to_string(),
+                requested_at: log1_requested_at,
+            };
+
+            let log2_requested_at = Local
+                .from_local_datetime(
+                    &NaiveDate::from_ymd_opt(2024, 1, 2)
+                        .unwrap()
+                        .and_hms_opt(3, 4, 6)
+                        .unwrap(),
+                )
+                .unwrap();
+            let log2 = RequestLog {
+                method: Method::Post,
+                headers: indexmap! {
+                    "hname1".to_string() => "hvalue1".to_string(),
+                    "hname2".to_string() => "hvalue2".to_string(),
+                },
+                path: "/greet".to_string(),
+                query: IndexMap::new(),
+                body: r#"{"message":"hi"}"#.to_string(),
+                requested_at: log2_requested_at,
+            };
+
+            let log3_requested_at = Local
+                .from_local_datetime(
+                    &NaiveDate::from_ymd_opt(2024, 1, 2)
+                        .unwrap()
+                        .and_hms_opt(3, 4, 7)
+                        .unwrap(),
+                )
+                .unwrap();
+            let log3 = RequestLog {
+                method: Method::Delete,
+                headers: indexmap! {},
+                path: "/bye".to_string(),
+                query: IndexMap::new(),
+                body: "".to_string(),
+                requested_at: log3_requested_at,
+            };
+
+            let logger = new_logger().await;
+
+            let another_session = "another_session";
+            logger.create_session(another_session).await.unwrap();
+
+            logger.log_request(DEFAULT_SESSION, &log1).await.unwrap();
+            logger.log_request(DEFAULT_SESSION, &log2).await.unwrap();
+            logger.log_request(another_session, &log3).await.unwrap();
+
+            assert_eq!(
+                logger.get_session_history(DEFAULT_SESSION).await,
+                Ok(vec![log1, log2])
             );
         }
     }
