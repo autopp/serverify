@@ -220,7 +220,7 @@ impl RequestLogger {
         // FIXME: remove .unwrap()
 
         #[derive(FromRow)]
-        struct SeesionRow {
+        struct SessionRow {
             id: i64,
         }
 
@@ -247,14 +247,17 @@ impl RequestLogger {
             value: String,
         }
 
-        let session: SeesionRow = sqlx::query_as("SELECT id FROM session WHERE name = ?")
+        let session_id = sqlx::query_as::<_, SessionRow>("SELECT id FROM session WHERE name = ?")
             .bind(session)
-            .fetch_one(&self.pool)
+            .fetch_optional(&self.pool)
             .await
             .map_err(|err| LoggerError::InternalError(err.to_string()))
-            .unwrap();
-
-        let session_id = session.id;
+            .and_then(|session_opt| {
+                session_opt.ok_or_else(|| {
+                    LoggerError::InvalidSession(format!("session \"{}\" is not found", session))
+                })
+            })?
+            .id;
 
         let logs: Vec<RequestLogRow> = sqlx::query_as(
             "SELECT id, method, path, body, requested_at FROM request_log WHERE session_id = ?",
@@ -496,6 +499,18 @@ mod tests {
                         }
                     )
                     .await,
+            );
+        }
+
+        #[tokio::test]
+        async fn when_unknown_session_is_passed_to_get_session_history() {
+            let logger = new_logger().await;
+
+            assert_eq!(
+                Err(LoggerError::InvalidSession(
+                    "session \"unknown_session\" is not found".to_string()
+                )),
+                logger.get_session_history("unknown_session",).await,
             );
         }
     }
