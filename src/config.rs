@@ -1,7 +1,7 @@
 use indexmap::IndexMap;
 use serde::Deserialize;
 
-use crate::mock_endpoint::{Method, MockEndpoint};
+use crate::{method::Method, mock_endpoint::MockEndpoint};
 
 #[derive(Deserialize)]
 struct Config {

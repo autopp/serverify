@@ -1,7 +1,7 @@
 use indexmap::IndexMap;
 use serde::Serialize;
 
-use crate::mock_endpoint::Method;
+use crate::method::Method;
 
 #[derive(Serialize, PartialEq, Debug, Clone)]
 pub struct History {

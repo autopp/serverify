@@ -6,27 +6,14 @@ use axum::{
     routing::{on, MethodFilter},
     Router,
 };
+use chrono::Local;
 use futures::TryStreamExt;
 use indexmap::IndexMap;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tokio::io::AsyncReadExt;
 use tokio_util::io::StreamReader;
 
-use crate::{history::History, state::SharedState};
-
-#[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Debug, Clone)]
-pub enum Method {
-    #[serde(rename = "get")]
-    Get,
-    #[serde(rename = "post")]
-    Post,
-    #[serde(rename = "put")]
-    Put,
-    #[serde(rename = "delete")]
-    Delete,
-    #[serde(rename = "patch")]
-    Patch,
-}
+use crate::{method::Method, request_logger::RequestLog, state::AppState};
 
 #[derive(PartialEq, Debug)]
 pub struct MockEndpoint {
@@ -43,7 +30,7 @@ struct PathParams {
 }
 
 impl MockEndpoint {
-    pub fn route_to(self, app: axum::Router<SharedState>) -> axum::Router<SharedState> {
+    pub fn route_to(self, app: axum::Router<AppState>) -> axum::Router<AppState> {
         let method = match self.method {
             Method::Get => MethodFilter::GET,
             Method::Post => MethodFilter::POST,
@@ -54,7 +41,7 @@ impl MockEndpoint {
 
         let route = on(
             method,
-            move |State(state): State<SharedState>, req: Request<Body>| async move {
+            move |State(state): State<AppState>, req: Request<Body>| async move {
                 // save history
                 let (mut parts, body) = req.into_parts();
                 let Path(PathParams { serverify_session }) =
@@ -87,17 +74,21 @@ impl MockEndpoint {
 
                     let mut buf: Vec<u8> = vec![];
                     stream.read_buf(&mut buf).await.unwrap(); // TODO handle error
-                    let history = History {
+
+                    let log = RequestLog {
                         method,
                         headers,
                         path,
                         query,
                         body: String::from_utf8_lossy(&buf).to_string(),
+                        requested_at: Local::now(),
                     };
 
-                    let sessions = &mut state.write().unwrap().sessions;
-                    let session = sessions.get_mut(&serverify_session).unwrap(); // TODO: handle error
-                    session.push(history);
+                    state
+                        .logger
+                        .log_request(&serverify_session, &log)
+                        .await
+                        .unwrap(); // TODO: handle error
                 }
 
                 // respond
@@ -121,7 +112,9 @@ impl MockEndpoint {
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Arc, vec};
+    use std::vec;
+
+    use crate::request_logger::testutil::new_logger;
 
     use super::*;
 
@@ -149,13 +142,11 @@ mod tests {
             body: "Hello, world!".to_string(),
         };
 
-        let shared_state = SharedState::default();
-        {
-            let sessions = &mut shared_state.write().unwrap().sessions;
-            sessions.insert("123".to_string(), vec![]);
-        };
+        let logger = new_logger().await;
+        logger.create_session("123").await.unwrap();
+        let state = AppState { logger };
 
-        let app = endpoint.route_to(app).with_state(Arc::clone(&shared_state));
+        let app = endpoint.route_to(app).with_state(state.clone());
         let server = TestServer::new(app).unwrap();
         let response = server
             .post("/mock/123/hello")
@@ -175,24 +166,20 @@ mod tests {
             response.headers()
         );
 
-        let sessions = &shared_state.read().unwrap().sessions;
+        let logs = state.logger.get_session_history("123").await.unwrap();
+        assert_eq!(1, logs.len());
+
+        let log = logs.first().unwrap();
+        assert_eq!(Method::Post, log.method);
         assert_eq!(
-            &indexmap! {
-                "123".to_string() => vec![History {
-                    method: Method::Post,
-                    headers: indexmap! {
-                        "content-type".to_string() => "text/plain".to_string(),
-                        "token".to_string() => "abc".to_string(),
-                    },
-                    path: "/hello".to_string(),
-                    query: indexmap! {
-                        "foo".to_string() => "x".to_string(),
-                        "bar".to_string() => "y".to_string()
-                    },
-                    body: "hello world".to_string(),
-                }]
-            },
-            sessions
+            indexmap! { "content-type".to_string() => "text/plain".to_string(), "token".to_string() => "abc".to_string(), },
+            log.headers
         );
+        assert_eq!("/hello".to_string(), log.path);
+        assert_eq!(
+            indexmap! { "foo".to_string() => "x".to_string(), "bar".to_string() => "y".to_string() },
+            log.query
+        );
+        assert_eq!("hello world".to_string(), log.body);
     }
 }

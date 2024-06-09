@@ -1,8 +1,10 @@
-use std::{fs, sync::Arc};
+use std::fs;
 
 use axum::{self, http::StatusCode, routing::get, Json, Router};
 use clap::Parser;
-use serverify::{config, session_endpoint::route_session_to, state::SharedState};
+use serverify::{
+    config, request_logger::RequestLogger, session_endpoint::route_session_to, state::AppState,
+};
 use tokio::signal;
 
 #[derive(Parser)]
@@ -18,13 +20,18 @@ async fn main() {
     let src = fs::read_to_string(args.config_path).unwrap();
     let endpoints = config::parse_config(&src).unwrap();
 
-    let shared_state = SharedState::default();
     let health = Router::new().route("/health", get(health));
     let mocks = endpoints
         .into_iter()
         .fold(health, |app, endpoint| endpoint.route_to(app));
 
-    let app = route_session_to(mocks).with_state(Arc::clone(&shared_state));
+    let pool = sqlx::sqlite::SqlitePool::connect("sqlite::memory:")
+        .await
+        .unwrap();
+    let logger = RequestLogger::new(pool).unwrap();
+    logger.init().await.unwrap();
+
+    let app = route_session_to(mocks).with_state(AppState { logger });
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", args.port))
         .await

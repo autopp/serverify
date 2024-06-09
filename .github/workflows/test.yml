@@ -31,6 +31,8 @@ jobs:
       - run: echo VERSION=${{ steps.extract-version.outputs.version }} TAG=${{ steps.extract-version.outputs.tag }}
       - run: cargo llvm-cov --all-features --lcov --output-path lcov.info
         id: unittest
+        env:
+          TZ: Asia/Tokyo
       - uses: codecov/codecov-action@v3
         if: ${{ steps.unittest.conclusion == 'success' || steps.unittest.conclusion == 'failure' }}
       - run: |

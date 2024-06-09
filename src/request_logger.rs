@@ -1,50 +1,9 @@
-use std::fmt::Display;
-
 use chrono::{DateTime, Local};
 use indexmap::IndexMap;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sqlx::{error::ErrorKind, prelude::FromRow, SqlitePool};
 
-#[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Debug, Clone)]
-pub enum Method {
-    #[serde(rename = "get")]
-    Get,
-    #[serde(rename = "post")]
-    Post,
-    #[serde(rename = "put")]
-    Put,
-    #[serde(rename = "delete")]
-    Delete,
-    #[serde(rename = "patch")]
-    Patch,
-}
-
-impl Display for Method {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Method::Get => write!(f, "get"),
-            Method::Post => write!(f, "post"),
-            Method::Put => write!(f, "put"),
-            Method::Delete => write!(f, "delete"),
-            Method::Patch => write!(f, "patch"),
-        }
-    }
-}
-
-impl TryFrom<&str> for Method {
-    type Error = String;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value {
-            "get" => Ok(Method::Get),
-            "post" => Ok(Method::Post),
-            "put" => Ok(Method::Put),
-            "delete" => Ok(Method::Delete),
-            "patch" => Ok(Method::Patch),
-            _ => Err(format!("unknown method: {}", value)),
-        }
-    }
-}
+use crate::method::Method;
 
 #[derive(Serialize, PartialEq, Debug, Clone)]
 pub struct RequestLog {
@@ -56,6 +15,7 @@ pub struct RequestLog {
     pub requested_at: DateTime<Local>,
 }
 
+#[derive(Clone)]
 pub struct RequestLogger {
     pool: SqlitePool,
 }
@@ -75,7 +35,7 @@ CREATE TABLE request_log (
     path VARCHAR(255) NOT NULL,
     body TEXT NOT NULL,
     requested_at TIMESTAMP NOT NULL,
-    FOREIGN KEY (session_id) REFERENCES session(id)
+    FOREIGN KEY (session_id) REFERENCES session(id) ON DELETE CASCADE
 );
 
 DROP TABLE IF EXISTS request_header;
@@ -84,7 +44,7 @@ CREATE TABLE request_header (
     request_log_id INTEGER NOT NULL,
     name TEXT NOT NULL,
     value TEXT NOT NULL,
-    FOREIGN KEY (request_log_id) REFERENCES request_log(id)
+    FOREIGN KEY (request_log_id) REFERENCES request_log(id) ON DELETE CASCADE
 );
 
 DROP TABLE IF EXISTS request_query;
@@ -93,7 +53,7 @@ CREATE TABLE request_query (
     request_log_id INTEGER NOT NULL,
     name TEXT NOT NULL,
     value TEXT NOT NULL,
-    FOREIGN KEY (request_log_id) REFERENCES request_log(id)
+    FOREIGN KEY (request_log_id) REFERENCES request_log(id) ON DELETE CASCADE
 );
 "#;
 
@@ -129,7 +89,7 @@ impl RequestLogger {
                     .and_then(|derr| {
                         if derr.is_unique_violation() {
                             Some(LoggerError::InvalidSession(format!(
-                                "session \"{}\" is already exists",
+                                "session \"{}\" already exists",
                                 session
                             )))
                         } else {
@@ -341,18 +301,28 @@ impl RequestLogger {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod testutil {
     use super::*;
 
-    const DEFAULT_SESSION: &str = "default_session";
-
-    async fn new_logger() -> RequestLogger {
+    pub async fn new_logger() -> RequestLogger {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .connect(":memory:")
             .await
             .unwrap();
         let logger = RequestLogger::new(pool).unwrap();
         logger.init().await.unwrap();
+        logger
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const DEFAULT_SESSION: &str = "default_session";
+
+    async fn new_logger_with_default_session() -> RequestLogger {
+        let logger = testutil::new_logger().await;
         logger.create_session(DEFAULT_SESSION).await.unwrap();
         logger
     }
@@ -363,17 +333,17 @@ mod tests {
 
         #[tokio::test]
         async fn with_unique_sessions() {
-            let logger = new_logger().await;
+            let logger = new_logger_with_default_session().await;
             assert_eq!(logger.create_session("new_session").await, Ok(()));
         }
 
         #[tokio::test]
         async fn with_duplicated_sessions() {
-            let logger = new_logger().await;
+            let logger = new_logger_with_default_session().await;
             assert_eq!(
                 logger.create_session(DEFAULT_SESSION).await,
                 Err(LoggerError::InvalidSession(format!(
-                    "session \"{}\" is already exists",
+                    "session \"{}\" already exists",
                     DEFAULT_SESSION
                 )))
             );
@@ -386,13 +356,13 @@ mod tests {
 
         #[tokio::test]
         async fn with_exist_session() {
-            let logger = new_logger().await;
+            let logger = new_logger_with_default_session().await;
             assert_eq!(logger.delete_session(DEFAULT_SESSION).await, Ok(()));
         }
 
         #[tokio::test]
         async fn with_not_exist_sessions() {
-            let logger = new_logger().await;
+            let logger = new_logger_with_default_session().await;
             assert_eq!(
                 logger.delete_session("new_session").await,
                 Err(LoggerError::InvalidSession(
@@ -468,7 +438,7 @@ mod tests {
                 requested_at: log3_requested_at,
             };
 
-            let logger = new_logger().await;
+            let logger = new_logger_with_default_session().await;
 
             let another_session = "another_session";
             logger.create_session(another_session).await.unwrap();
@@ -485,7 +455,7 @@ mod tests {
 
         #[tokio::test]
         async fn when_no_requests_are_logged() {
-            let logger = new_logger().await;
+            let logger = new_logger_with_default_session().await;
 
             assert_eq!(
                 Ok(vec![]),
@@ -495,7 +465,7 @@ mod tests {
 
         #[tokio::test]
         async fn when_unknown_session_is_passed_to_log_request() {
-            let logger = new_logger().await;
+            let logger = new_logger_with_default_session().await;
 
             assert_eq!(
                 Err(LoggerError::InvalidSession(
@@ -519,7 +489,7 @@ mod tests {
 
         #[tokio::test]
         async fn when_unknown_session_is_passed_to_get_session_history() {
-            let logger = new_logger().await;
+            let logger = new_logger_with_default_session().await;
 
             assert_eq!(
                 Err(LoggerError::InvalidSession(
