@@ -14,10 +14,31 @@ struct Args {
     config_path: String,
 }
 
+trait ResultExt<T, E> {
+    fn exit_on_err(self, code: i32) -> T;
+}
+
+impl<T, E: ToString> ResultExt<T, E> for Result<T, E> {
+    fn exit_on_err(self, code: i32) -> T {
+        match self {
+            Ok(value) => value,
+            Err(err) => {
+                eprintln!("Error: {}", err.to_string());
+                std::process::exit(code);
+            }
+        }
+    }
+}
+
+const EXIT_STATUS_INVALID_INPUT: i32 = 2;
+
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
-    let src = fs::read_to_string(args.config_path).unwrap();
+    let src = fs::read_to_string(&args.config_path)
+        .map_err(|err| format!("cannot read config from {}: {}", args.config_path, err))
+        .exit_on_err(EXIT_STATUS_INVALID_INPUT);
+
     let endpoints = config::parse_config(&src).unwrap();
 
     let health = Router::new().route("/health", get(health));

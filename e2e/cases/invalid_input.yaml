@@ -1,0 +1,18 @@
+tests:
+  - name: missing config path
+    command:
+      - $env: SERVERIFY
+    expect:
+        status:
+          eq: 2
+        stderr:
+          contain: "Usage: serverify <CONFIG_PATH>"
+  - name: when config path is not found
+    command:
+      - $env: SERVERIFY
+      - /dev/null/serverify.yaml
+    expect:
+        status:
+          eq: 2
+        stderr:
+          contain: "cannot read config from /dev/null/serverify.yaml:"
