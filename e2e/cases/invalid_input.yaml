@@ -16,3 +16,25 @@ tests:
           eq: 2
         stderr:
           contain: "cannot read config from /dev/null/serverify.yaml:"
+  - name: when config is not valid yaml
+    command:
+      - $env: SERVERIFY
+      - $tmp_file:
+          filename: serverify.yaml
+          contents: 'paths: {'
+    expect:
+        status:
+          eq: 2
+        stderr:
+          contain: "cannot read config from"
+  - name: when config is not valid
+    command:
+      - $env: SERVERIFY
+      - $tmp_file:
+          filename: serverify.yaml
+          contents: '{}'
+    expect:
+        status:
+          eq: 2
+        stderr:
+          contain: "cannot read config from"

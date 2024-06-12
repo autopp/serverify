@@ -35,11 +35,11 @@ const EXIT_STATUS_INVALID_INPUT: i32 = 2;
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
-    let src = fs::read_to_string(&args.config_path)
+    let endpoints = fs::read_to_string(&args.config_path)
+        .map_err(|err| err.to_string())
+        .and_then(|src| config::parse_config(&src))
         .map_err(|err| format!("cannot read config from {}: {}", args.config_path, err))
         .exit_on_err(EXIT_STATUS_INVALID_INPUT);
-
-    let endpoints = config::parse_config(&src).unwrap();
 
     let health = Router::new().route("/health", get(health));
     let mocks = endpoints
