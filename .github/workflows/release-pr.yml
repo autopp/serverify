@@ -7,8 +7,9 @@ on:
 jobs:
   test-and-build:
     uses: ./.github/workflows/test.yml
-    if: (startsWith(github.head_ref, 'release/') && !github.event.pull_request.head.fork)
+    if: (startsWith(github.head_ref, 'release/') && !github.event.pull_request.head.repo.fork)
     secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
   prepare-release:
     env:
@@ -22,7 +23,7 @@ jobs:
         run: |
           VERSION=$(cargo metadata --format-version=1 --no-deps | jq -r '.packages[0].version')
           TAG="v${VERSION}"
-          if [[ $(gh api /repos/autopp/serverify/releases | jq "any(.name == \"${VERSION}\" and .draft == true)") = true ]]; then
+          if [[ $(gh api /repos/autopp/serverify/releases | jq "any(.name == \"${TAG}\" and .draft == true)") = true ]]; then
             echo Delete existing release
             gh release delete "${TAG}"
           fi

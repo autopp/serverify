@@ -5,6 +5,8 @@ on:
     secrets:
       SLACK_WEBHOOK_URL:
         required: true
+      CODECOV_TOKEN:
+        required: true
     outputs:
       version:
         value: ${{ jobs.test-and-build.outputs.version }}
@@ -33,7 +35,9 @@ jobs:
         id: unittest
         env:
           TZ: Asia/Tokyo
-      - uses: codecov/codecov-action@v3
+      - uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
         if: ${{ steps.unittest.conclusion == 'success' || steps.unittest.conclusion == 'failure' }}
       - run: |
           cargo fmt --check
