@@ -51,6 +51,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      - run: sudo apt install -y musl-tools musl-dev
+        if: matrix.target == 'x86_64-unknown-linux-musl'
       - name: Attach Artifacts
         run: |
           VERSION=$(cargo metadata --format-version=1 --no-deps | jq -r '.packages[0].version')
