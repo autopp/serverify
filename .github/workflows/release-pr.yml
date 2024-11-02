@@ -57,7 +57,7 @@ jobs:
         run: |
           VERSION=$(cargo metadata --format-version=1 --no-deps | jq -r '.packages[0].version')
           TAG="v${VERSION}"
-          cargo build --release --target=${{ matrix.target }}
+          cargo build --release --target=${{ matrix.target }} --features=cli
           mv target/${{ matrix.target }}/release/serverify serverify-${{ matrix.target }}
           gh release upload "${TAG}" serverify-${{ matrix.target }} --clobber
       - name: Notify to Slack
