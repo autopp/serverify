@@ -30,12 +30,16 @@ jobs:
           fi
 
           if [ "${{ github.event.pull_request.merged }}" = true ]; then
-            echo "Publish ${TAG} from draft"
+            echo "Publish crate"
+            cargo publish
+            echo "Publish GitHub release ${TAG} from draft"
             gh release edit "${TAG}" --draft=false
           else
             echo "Delete ${TAG}"
             gh release delete "${TAG}"
           fi
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
       - name: Notify to Slack
         uses: 8398a7/action-slack@v3
         with:
