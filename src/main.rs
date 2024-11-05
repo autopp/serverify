@@ -1,10 +1,7 @@
 use std::fs;
 
-use axum::{self, http::StatusCode, routing::get, Json, Router};
 use clap::Parser;
-use serverify::{
-    config, request_logger::RequestLogger, session_endpoint::route_session_to, state::AppState,
-};
+use serverify::{config, serve};
 use tokio::signal;
 
 #[derive(Parser)]
@@ -40,36 +37,7 @@ async fn main() {
         .and_then(|src| config::parse_config(&src))
         .map_err(|err| format!("cannot read config from {}: {}", args.config_path, err))
         .exit_on_err(EXIT_STATUS_INVALID_INPUT);
-
-    let health = Router::new().route("/health", get(health));
-    let mocks = endpoints
-        .into_iter()
-        .fold(health, |app, endpoint| endpoint.route_to(app));
-
-    let pool = sqlx::sqlite::SqlitePool::connect("sqlite::memory:")
-        .await
-        .unwrap();
-    let logger = RequestLogger::new(pool).unwrap();
-    logger.init().await.unwrap();
-
-    let app = route_session_to(mocks).with_state(AppState { logger });
-
-    let listener = tokio::net::TcpListener::bind(("0.0.0.0", args.port))
-        .await
-        .unwrap();
-
-    let (close_tx, close_rx) = tokio::sync::oneshot::channel();
-
-    let server_handle = tokio::spawn(async move {
-        axum::serve(listener, app)
-            .with_graceful_shutdown(async move {
-                println!("wait");
-                _ = close_rx.await;
-                println!("shut down")
-            })
-            .await
-            .unwrap();
-    });
+    let handle = serve(endpoints, ("0.0.0.0", args.port)).await.unwrap();
 
     let ctrl_c = async {
         signal::ctrl_c()
@@ -89,11 +57,5 @@ async fn main() {
         _ = terminate => {},
     };
 
-    _ = close_tx.send(());
-
-    _ = server_handle.await;
-}
-
-async fn health() -> (StatusCode, Json<serde_json::Value>) {
-    (StatusCode::OK, Json(serde_json::json!({ "status": "ok" })))
+    handle.shutdown().await.unwrap();
 }
