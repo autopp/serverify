@@ -58,17 +58,19 @@ async fn main() {
         .await
         .unwrap();
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .unwrap();
-}
+    let (close_tx, close_rx) = tokio::sync::oneshot::channel();
 
-async fn health() -> (StatusCode, Json<serde_json::Value>) {
-    (StatusCode::OK, Json(serde_json::json!({ "status": "ok" })))
-}
+    let server_handle = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async move {
+                println!("wait");
+                _ = close_rx.await;
+                println!("shut down")
+            })
+            .await
+            .unwrap();
+    });
 
-async fn shutdown_signal() {
     let ctrl_c = async {
         signal::ctrl_c()
             .await
@@ -85,5 +87,13 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = ctrl_c => {},
         _ = terminate => {},
-    }
+    };
+
+    _ = close_tx.send(());
+
+    _ = server_handle.await;
+}
+
+async fn health() -> (StatusCode, Json<serde_json::Value>) {
+    (StatusCode::OK, Json(serde_json::json!({ "status": "ok" })))
 }
