@@ -27,6 +27,7 @@ tokio-util = { version = "0.7.10", features = ["io"] }
 [dev-dependencies]
 axum-test = "14.8.0"
 pretty_assertions = "1.4.0"
+reqwest = "0.12.9"
 rstest = "0.18.2"
 
 [[bin]]
