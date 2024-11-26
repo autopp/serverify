@@ -12,21 +12,22 @@ struct Args {
 }
 
 trait ResultExt<T, E> {
-    fn exit_on_err(self, code: i32) -> T;
+    fn exit_on_err(self, code: i32, message: impl FnOnce(E) -> String) -> T;
 }
 
 impl<T, E: ToString> ResultExt<T, E> for Result<T, E> {
-    fn exit_on_err(self, code: i32) -> T {
+    fn exit_on_err(self, code: i32, message: impl FnOnce(E) -> String) -> T {
         match self {
             Ok(value) => value,
             Err(err) => {
-                eprintln!("Error: {}", err.to_string());
+                eprintln!("Error: {}", message(err));
                 std::process::exit(code);
             }
         }
     }
 }
 
+const EXIT_STATUS_SERVER_ERROR: i32 = 1;
 const EXIT_STATUS_INVALID_INPUT: i32 = 2;
 
 #[tokio::main]
@@ -35,9 +36,14 @@ async fn main() {
     let endpoints = fs::read_to_string(&args.config_path)
         .map_err(|err| err.to_string())
         .and_then(|src| config::parse_config(&src))
-        .map_err(|err| format!("cannot read config from {}: {}", args.config_path, err))
-        .exit_on_err(EXIT_STATUS_INVALID_INPUT);
-    let handle = serve(endpoints, ("0.0.0.0", args.port)).await.unwrap();
+        .exit_on_err(EXIT_STATUS_INVALID_INPUT, |err| {
+            format!("cannot read config from {}: {}", args.config_path, err)
+        });
+    let handle = serve(endpoints, ("0.0.0.0", args.port))
+        .await
+        .exit_on_err(EXIT_STATUS_SERVER_ERROR, |err| {
+            format!("cannot start server on port {}: {}", args.port, err)
+        });
 
     let ctrl_c = async {
         signal::ctrl_c()
@@ -57,5 +63,10 @@ async fn main() {
         _ = terminate => {},
     };
 
-    handle.shutdown().await.unwrap();
+    handle
+        .shutdown()
+        .await
+        .exit_on_err(EXIT_STATUS_SERVER_ERROR, |err| {
+            format!("cannot shutdown server gracefully: {}", err)
+        });
 }
