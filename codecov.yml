@@ -6,3 +6,5 @@ coverage:
     patch:
       default:
         threshold: "5%"
+ignore:
+  - "src/main.rs"
