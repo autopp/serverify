@@ -36,16 +36,23 @@ pub async fn serve<A: ToSocketAddrs>(
 
     let pool = sqlx::sqlite::SqlitePool::connect("sqlite::memory:")
         .await
-        .unwrap();
-    let logger = RequestLogger::new(pool).unwrap();
-    logger.init().await.unwrap();
+        .map_err(|e| e.to_string())?;
+    let logger = RequestLogger::new(pool);
+    logger
+        .init()
+        .await
+        .map_err(|e| format!("cannot initialize logger: {}", e.to_message()))?;
 
     let app = route_session_to(mocks).with_state(AppState { logger });
 
     let (close_tx, close_rx) = tokio::sync::oneshot::channel();
 
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    let addr = listener.local_addr().unwrap();
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .map_err(|e| format!("cannot listen: {}", e))?;
+    let addr = listener
+        .local_addr()
+        .map_err(|e| format!("cannot get local address: {}", e))?;
     let handle = tokio::spawn(async move {
         axum::serve(listener, app)
             .with_graceful_shutdown(async move {
@@ -54,7 +61,7 @@ pub async fn serve<A: ToSocketAddrs>(
                 println!("shut down")
             })
             .await
-            .unwrap();
+            .unwrap(); // TODO: handle error
     });
 
     Ok(ServerHandle {
