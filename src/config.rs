@@ -1,7 +1,10 @@
 use indexmap::IndexMap;
 use serde::Deserialize;
 
-use crate::{method::Method, mock_endpoint::MockEndpoint};
+use crate::{
+    method::Method,
+    mock_endpoint::{MockEndpoint, StatusCode},
+};
 
 #[derive(Deserialize)]
 struct Config {
@@ -23,22 +26,23 @@ struct ResponseConfig {
 pub fn parse_config(src: &str) -> Result<Vec<MockEndpoint>, String> {
     serde_yaml::from_str::<Config>(src)
         .map_err(|e| e.to_string())
-        .map(|config| {
+        .and_then(|config| {
             config
                 .paths
                 .into_iter()
                 .flat_map(|(path, methods)| {
-                    methods
-                        .into_iter()
-                        .map(move |(method, endpoint)| MockEndpoint {
+                    methods.into_iter().map(move |(method, endpoint)| {
+                        let status = StatusCode::try_from(endpoint.response.status)?;
+                        Ok(MockEndpoint {
                             method,
                             path: path.clone(),
-                            status: endpoint.response.status,
+                            status,
                             headers: endpoint.response.headers.unwrap_or_default(),
                             body: endpoint.response.body,
                         })
+                    })
                 })
-                .collect()
+                .collect::<Result<Vec<_>, _>>()
         })
 }
 
@@ -74,21 +78,21 @@ paths:
         MockEndpoint {
             method: Method::Get,
             path: "/hello".to_string(),
-            status: 200,
+            status: StatusCode::try_from(200).unwrap(),
             headers: indexmap! { "Content-Type".to_string() => "text/plain".to_string() },
             body: "Hello, world!".to_string(),
         },
         MockEndpoint {
             method: Method::Post,
             path: "/hello".to_string(),
-            status: 204,
+            status: StatusCode::try_from(204).unwrap(),
             headers: indexmap! {},
             body: "".to_string(),
         },
         MockEndpoint {
             method: Method::Get,
             path: "/goodbye".to_string(),
-            status: 200,
+            status: StatusCode::try_from(200).unwrap(),
             headers: indexmap! { "Content-Type".to_string() => "text/plain".to_string() },
             body: "Goodbye, world!".to_string(),
         },

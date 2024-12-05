@@ -16,10 +16,23 @@ use tokio_util::io::StreamReader;
 use crate::{method::Method, request_logger::RequestLog, state::AppState};
 
 #[derive(PartialEq, Debug)]
+pub struct StatusCode(axum::http::StatusCode);
+
+impl TryFrom<u16> for StatusCode {
+    type Error = String;
+
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
+        axum::http::StatusCode::from_u16(value)
+            .map(StatusCode)
+            .map_err(|err| err.to_string())
+    }
+}
+
+#[derive(PartialEq, Debug)]
 pub struct MockEndpoint {
     pub method: Method,
     pub path: String,
-    pub status: u16,
+    pub status: StatusCode,
     pub headers: IndexMap<String, String>,
     pub body: String,
 }
@@ -97,7 +110,7 @@ impl MockEndpoint {
                     .fold(axum::http::Response::builder(), |builder, (key, value)| {
                         builder.header(key, value)
                     })
-                    .status(axum::http::StatusCode::from_u16(self.status).unwrap())
+                    .status(self.status.0)
                     .body(self.body)
                     .unwrap()
             },
@@ -137,7 +150,7 @@ mod tests {
         let endpoint = MockEndpoint {
             method: Method::Post,
             path: "/hello".to_string(),
-            status: 200,
+            status: StatusCode::try_from(200).unwrap(),
             headers: indexmap! { "answer".to_string() => "42".to_string() },
             body: "Hello, world!".to_string(),
         };
