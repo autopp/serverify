@@ -9,15 +9,17 @@ use crate::{
 };
 
 pub struct ServerHandle {
-    handle: JoinHandle<()>,
+    handle: JoinHandle<Result<(), String>>,
     close_tx: Sender<()>,
     addr: SocketAddr,
 }
 
 impl ServerHandle {
     pub async fn shutdown(self) -> Result<(), String> {
-        self.close_tx.send(()).map_err(|_| "".to_string())?;
-        self.handle.await.map_err(|e| e.to_string())
+        self.close_tx
+            .send(())
+            .map_err(|_| "failed to send shutdown signal".to_string())?;
+        self.handle.await.unwrap_or_else(|e| Err(e.to_string()))
     }
 
     pub fn addr(&self) -> SocketAddr {
@@ -56,12 +58,10 @@ pub async fn serve<A: ToSocketAddrs>(
     let handle = tokio::spawn(async move {
         axum::serve(listener, app)
             .with_graceful_shutdown(async move {
-                println!("wait");
                 _ = close_rx.await;
-                println!("shut down")
             })
             .await
-            .unwrap(); // TODO: handle error
+            .map_err(|e| e.to_string())
     });
 
     Ok(ServerHandle {
