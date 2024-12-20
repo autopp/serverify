@@ -63,11 +63,20 @@ pub enum LoggerError {
     InternalError(String),
 }
 
+impl LoggerError {
+    pub fn to_message(self) -> String {
+        match self {
+            LoggerError::InvalidSession(message) => message,
+            LoggerError::InternalError(message) => message,
+        }
+    }
+}
+
 pub type LoggerResult<T> = Result<T, LoggerError>;
 
 impl RequestLogger {
-    pub fn new(pool: SqlitePool) -> Result<Self, String> {
-        Ok(Self { pool })
+    pub fn new(pool: SqlitePool) -> Self {
+        Self { pool }
     }
 
     pub async fn init(&self) -> LoggerResult<()> {
@@ -309,7 +318,7 @@ pub mod testutil {
             .connect(":memory:")
             .await
             .unwrap();
-        let logger = RequestLogger::new(pool).unwrap();
+        let logger = RequestLogger::new(pool);
         logger.init().await.unwrap();
         logger
     }

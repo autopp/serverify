@@ -9,15 +9,17 @@ use crate::{
 };
 
 pub struct ServerHandle {
-    handle: JoinHandle<()>,
+    handle: JoinHandle<Result<(), String>>,
     close_tx: Sender<()>,
     addr: SocketAddr,
 }
 
 impl ServerHandle {
     pub async fn shutdown(self) -> Result<(), String> {
-        self.close_tx.send(()).map_err(|_| "".to_string())?;
-        self.handle.await.map_err(|e| e.to_string())
+        self.close_tx
+            .send(())
+            .map_err(|_| "failed to send shutdown signal".to_string())?;
+        self.handle.await.unwrap_or_else(|e| Err(e.to_string()))
     }
 
     pub fn addr(&self) -> SocketAddr {
@@ -36,25 +38,30 @@ pub async fn serve<A: ToSocketAddrs>(
 
     let pool = sqlx::sqlite::SqlitePool::connect("sqlite::memory:")
         .await
-        .unwrap();
-    let logger = RequestLogger::new(pool).unwrap();
-    logger.init().await.unwrap();
+        .map_err(|e| e.to_string())?;
+    let logger = RequestLogger::new(pool);
+    logger
+        .init()
+        .await
+        .map_err(|e| format!("cannot initialize logger: {}", e.to_message()))?;
 
     let app = route_session_to(mocks).with_state(AppState { logger });
 
     let (close_tx, close_rx) = tokio::sync::oneshot::channel();
 
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    let addr = listener.local_addr().unwrap();
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .map_err(|e| format!("cannot listen: {}", e))?;
+    let addr = listener
+        .local_addr()
+        .map_err(|e| format!("cannot get local address: {}", e))?;
     let handle = tokio::spawn(async move {
         axum::serve(listener, app)
             .with_graceful_shutdown(async move {
-                println!("wait");
                 _ = close_rx.await;
-                println!("shut down")
             })
             .await
-            .unwrap();
+            .map_err(|e| e.to_string())
     });
 
     Ok(ServerHandle {
