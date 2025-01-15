@@ -2,7 +2,8 @@ use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Debug, Clone)]
+#[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Clone)]
+#[cfg_attr(test, derive(Debug))]
 pub enum Method {
     #[serde(rename = "get")]
     Get,

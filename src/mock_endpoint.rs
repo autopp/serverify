@@ -19,7 +19,7 @@ use crate::{
     state::AppState,
 };
 
-#[derive(PartialEq, Debug)]
+#[cfg_attr(test, derive(Debug, PartialEq))]
 pub struct StatusCode(axum::http::StatusCode);
 
 impl TryFrom<u16> for StatusCode {
@@ -32,7 +32,7 @@ impl TryFrom<u16> for StatusCode {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[cfg_attr(test, derive(Debug, PartialEq))]
 pub struct MockEndpoint {
     pub method: Method,
     pub path: String,

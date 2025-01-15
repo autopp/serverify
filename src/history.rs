@@ -3,7 +3,8 @@ use serde::Serialize;
 
 use crate::method::Method;
 
-#[derive(Serialize, PartialEq, Debug, Clone)]
+#[derive(Serialize, Clone)]
+#[cfg_attr(test, derive(Debug, PartialEq))]
 pub struct History {
     pub method: Method,
     pub headers: IndexMap<String, String>,
