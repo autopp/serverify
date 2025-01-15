@@ -5,7 +5,8 @@ use sqlx::{error::ErrorKind, prelude::FromRow, SqlitePool};
 
 use crate::method::Method;
 
-#[derive(Serialize, PartialEq, Debug, Clone)]
+#[derive(Serialize, Clone)]
+#[cfg_attr(test, derive(Debug, PartialEq))]
 pub struct RequestLog {
     pub method: Method,
     pub headers: IndexMap<String, String>,
@@ -57,7 +58,7 @@ CREATE TABLE request_query (
 );
 "#;
 
-#[derive(Debug, PartialEq)]
+#[cfg_attr(test, derive(Debug, PartialEq))]
 pub enum LoggerError {
     InvalidSession(String),
     InternalError(String),
