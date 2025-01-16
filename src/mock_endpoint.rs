@@ -19,6 +19,7 @@ use crate::{
     state::AppState,
 };
 
+#[derive(Clone)]
 #[cfg_attr(test, derive(Debug, PartialEq))]
 pub struct StatusCode(axum::http::StatusCode);
 
@@ -32,13 +33,40 @@ impl TryFrom<u16> for StatusCode {
     }
 }
 
+#[derive(Clone)]
+#[cfg_attr(test, derive(Debug, PartialEq))]
+pub enum ResponseHandler {
+    Static {
+        status: StatusCode,
+        headers: IndexMap<String, String>,
+        body: String,
+    },
+}
+
+impl ResponseHandler {
+    pub fn respond(&self) -> Result<axum::http::Response<String>, (u16, String)> {
+        match self {
+            ResponseHandler::Static {
+                status,
+                headers,
+                body,
+            } => headers
+                .into_iter()
+                .fold(axum::http::Response::builder(), |builder, (key, value)| {
+                    builder.header(key, value)
+                })
+                .status(status.0)
+                .body(body.clone())
+                .map_err(|e| (500, e.to_string())),
+        }
+    }
+}
+
 #[cfg_attr(test, derive(Debug, PartialEq))]
 pub struct MockEndpoint {
     pub method: Method,
     pub path: String,
-    pub status: StatusCode,
-    pub headers: IndexMap<String, String>,
-    pub body: String,
+    pub response: ResponseHandler,
 }
 
 #[derive(Deserialize)]
@@ -121,14 +149,7 @@ impl MockEndpoint {
                     }
 
                     // respond
-                    self.headers
-                        .into_iter()
-                        .fold(axum::http::Response::builder(), |builder, (key, value)| {
-                            builder.header(key, value)
-                        })
-                        .status(self.status.0)
-                        .body(self.body)
-                        .map_err(|e| (500, e.to_string()))
+                    self.response.respond()
                 }
                 .await
                 .unwrap_or_else(|(status, message)| {
@@ -174,9 +195,11 @@ mod tests {
         let endpoint = MockEndpoint {
             method: Method::Post,
             path: "/hello".to_string(),
-            status: StatusCode::try_from(200).unwrap(),
-            headers: indexmap! { "answer".to_string() => "42".to_string() },
-            body: "Hello, world!".to_string(),
+            response: ResponseHandler::Static {
+                status: StatusCode::try_from(200).unwrap(),
+                headers: indexmap! { "answer".to_string() => "42".to_string() },
+                body: "Hello, world!".to_string(),
+            },
         };
 
         let logger = new_logger().await;
