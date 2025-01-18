@@ -3,7 +3,7 @@ use serde::Deserialize;
 
 use crate::{
     method::Method,
-    mock_endpoint::{MockEndpoint, StatusCode},
+    mock_endpoint::{MockEndpoint, ResponseHandler, StatusCode},
 };
 
 #[derive(Deserialize)]
@@ -36,9 +36,11 @@ pub fn parse_config(src: &str) -> Result<Vec<MockEndpoint>, String> {
                         Ok(MockEndpoint {
                             method,
                             path: path.clone(),
-                            status,
-                            headers: endpoint.response.headers.unwrap_or_default(),
-                            body: endpoint.response.body,
+                            response: ResponseHandler::Static {
+                                status,
+                                headers: endpoint.response.headers.unwrap_or_default(),
+                                body: endpoint.response.body,
+                            },
                         })
                     })
                 })
@@ -78,23 +80,29 @@ paths:
         MockEndpoint {
             method: Method::Get,
             path: "/hello".to_string(),
-            status: StatusCode::try_from(200).unwrap(),
-            headers: indexmap! { "Content-Type".to_string() => "text/plain".to_string() },
-            body: "Hello, world!".to_string(),
+            response: ResponseHandler::Static {
+                status: StatusCode::try_from(200).unwrap(),
+                headers: indexmap! { "Content-Type".to_string() => "text/plain".to_string() },
+                body: "Hello, world!".to_string(),
+            },
         },
         MockEndpoint {
             method: Method::Post,
             path: "/hello".to_string(),
-            status: StatusCode::try_from(204).unwrap(),
-            headers: indexmap! {},
-            body: "".to_string(),
+            response: ResponseHandler::Static {
+                status: StatusCode::try_from(204).unwrap(),
+                headers: indexmap! {},
+                body: "".to_string(),
+            },
         },
         MockEndpoint {
             method: Method::Get,
             path: "/goodbye".to_string(),
-            status: StatusCode::try_from(200).unwrap(),
-            headers: indexmap! { "Content-Type".to_string() => "text/plain".to_string() },
-            body: "Goodbye, world!".to_string(),
+            response: ResponseHandler::Static {
+                status: StatusCode::try_from(200).unwrap(),
+                headers: indexmap! { "Content-Type".to_string() => "text/plain".to_string() },
+                body: "Goodbye, world!".to_string(),
+            },
         },
     ]))]
     fn test_parse_config(#[case] src: &str, #[case] expected: Result<Vec<MockEndpoint>, String>) {
