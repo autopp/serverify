@@ -1,11 +1,15 @@
 use indexmap::IndexMap;
 use serde_json::Value;
 
+#[derive(Clone)]
+#[cfg_attr(test, derive(Debug, PartialEq))]
 pub struct JsonTemplate {
     template: serde_json::Value,
     placeholder_paths: Vec<PlaceholderPath>,
 }
 
+#[derive(Clone)]
+#[cfg_attr(test, derive(Debug, PartialEq))]
 enum PlaceholderPath {
     PlaceHolder(String),
     Index(usize, Box<PlaceholderPath>),
