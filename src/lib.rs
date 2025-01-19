@@ -1,5 +1,6 @@
 pub mod config;
 pub mod history;
+pub mod json_template;
 pub mod method;
 pub mod mock_endpoint;
 pub mod request_logger;
