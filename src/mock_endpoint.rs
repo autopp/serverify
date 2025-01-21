@@ -47,6 +47,7 @@ pub enum ResponseHandler {
         headers: IndexMap<String, String>,
         page_param: String,
         per_page_param: String,
+        default_per_page: usize,
         template: JsonTemplate,
         items: Vec<serde_json::Value>,
     },
@@ -75,6 +76,7 @@ impl ResponseHandler {
                 headers,
                 page_param,
                 per_page_param,
+                default_per_page,
                 template,
                 items,
             } => {
@@ -85,7 +87,7 @@ impl ResponseHandler {
                 let per_page = query
                     .get(per_page_param)
                     .and_then(|page| page.parse::<usize>().ok())
-                    .unwrap_or(1);
+                    .unwrap_or(*default_per_page);
 
                 let contents = serde_json::Value::Array(
                     items
@@ -221,7 +223,7 @@ impl MockEndpoint {
 
 #[cfg(test)]
 mod tests {
-    use std::vec;
+    use std::{str::FromStr, vec};
 
     use crate::request_logger::testutil::new_logger;
 
@@ -231,77 +233,81 @@ mod tests {
     use axum_test::TestServer;
 
     use indexmap::indexmap;
-    use pretty_assertions::assert_eq;
     use serde_json::json;
 
-    fn headers(kvs: Vec<(&'static str, &'static str)>) -> HeaderMap {
-        HeaderMap::from_iter(
-            kvs.into_iter()
-                .map(|(k, v)| (HeaderName::from_static(k), HeaderValue::from_static(v))),
-        )
-    }
-
-    #[tokio::test]
-    async fn route_to() {
-        let app = axum::Router::new();
-        let endpoint = MockEndpoint {
-            method: Method::Post,
-            path: "/hello".to_string(),
-            response: ResponseHandler::Static {
-                status: StatusCode::try_from(200).unwrap(),
-                headers: indexmap! { "answer".to_string() => "42".to_string() },
-                body: "Hello, world!".to_string(),
-            },
-        };
-
-        let logger = new_logger().await;
-        logger.create_session("123").await.unwrap();
-        let state = AppState { logger };
-
-        let app = endpoint.route_to(app).with_state(state.clone());
-        let server = TestServer::new(app).unwrap();
-        let response = server
-            .post("/mock/123/hello")
-            .add_query_param("foo", "x")
-            .add_query_param("bar", "y")
-            .add_header(
-                HeaderName::from_static("token"),
-                HeaderValue::from_static("abc"),
+    fn headers(kvs: Vec<(&str, &str)>) -> HeaderMap {
+        HeaderMap::from_iter(kvs.into_iter().map(|(k, v)| {
+            (
+                HeaderName::from_str(k).unwrap(),
+                HeaderValue::from_str(v).unwrap(),
             )
-            .text("hello world")
-            .await;
-
-        assert_eq!(200, response.status_code());
-        assert_eq!("Hello, world!", response.text());
-        assert_eq!(
-            &headers(vec![("content-length", "13"), ("answer", "42")]),
-            response.headers()
-        );
-
-        let logs = state.logger.get_session_history("123").await.unwrap();
-        assert_eq!(1, logs.len());
-
-        let log = logs.first().unwrap();
-        assert_eq!(Method::Post, log.method);
-        assert_eq!(
-            indexmap! { "content-type".to_string() => "text/plain".to_string(), "token".to_string() => "abc".to_string(), },
-            log.headers
-        );
-        assert_eq!("/hello".to_string(), log.path);
-        assert_eq!(
-            indexmap! { "foo".to_string() => "x".to_string(), "bar".to_string() => "y".to_string() },
-            log.query
-        );
-        assert_eq!("hello world".to_string(), log.body);
+        }))
     }
 
-    #[tokio::test]
-    async fn route_to_paging() {
-        let app = axum::Router::new();
-        let endpoint = MockEndpoint {
-            method: Method::Post,
-            path: "/hello".to_string(),
-            response: ResponseHandler::Paging {
+    mod route_to {
+        use super::*;
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        #[rstest]
+        #[tokio::test]
+        async fn route_to_static() {
+            let app = axum::Router::new();
+            let endpoint = MockEndpoint {
+                method: Method::Post,
+                path: "/hello".to_string(),
+                response: ResponseHandler::Static {
+                    status: StatusCode::try_from(200).unwrap(),
+                    headers: indexmap! { "answer".to_string() => "42".to_string() },
+                    body: "Hello, world!".to_string(),
+                },
+            };
+
+            let logger = new_logger().await;
+            logger.create_session("123").await.unwrap();
+            let state = AppState { logger };
+
+            let app = endpoint.route_to(app).with_state(state.clone());
+            let server = TestServer::new(app).unwrap();
+            let response = server
+                .post("/mock/123/hello")
+                .add_query_param("foo", "x")
+                .add_query_param("bar", "y")
+                .add_header(
+                    HeaderName::from_static("token"),
+                    HeaderValue::from_static("abc"),
+                )
+                .text("hello world")
+                .await;
+
+            assert_eq!(200, response.status_code());
+            assert_eq!("Hello, world!", response.text());
+            assert_eq!(
+                &headers(vec![("content-length", "13"), ("answer", "42")]),
+                response.headers()
+            );
+
+            let logs = state.logger.get_session_history("123").await.unwrap();
+            assert_eq!(1, logs.len());
+
+            let log = logs.first().unwrap();
+            assert_eq!(Method::Post, log.method);
+            assert_eq!(
+                indexmap! { "content-type".to_string() => "text/plain".to_string(), "token".to_string() => "abc".to_string(), },
+                log.headers
+            );
+            assert_eq!("/hello".to_string(), log.path);
+            assert_eq!(
+                indexmap! { "foo".to_string() => "x".to_string(), "bar".to_string() => "y".to_string() },
+                log.query
+            );
+            assert_eq!("hello world".to_string(), log.body);
+        }
+
+        #[rstest]
+        #[tokio::test]
+        #[case(
+            ResponseHandler::Paging {
                 status: StatusCode::try_from(200).unwrap(),
                 headers: indexmap! { "answer".to_string() => "42".to_string() },
                 template: JsonTemplate::parse(
@@ -326,58 +332,132 @@ mod tests {
                 ],
                 page_param: "page".to_string(),
                 per_page_param: "per_page".to_string(),
+                default_per_page: 2,
             },
-        };
-
-        let logger = new_logger().await;
-        logger.create_session("123").await.unwrap();
-        let state = AppState { logger };
-
-        let app = endpoint.route_to(app).with_state(state.clone());
-        let server = TestServer::new(app).unwrap();
-        let response = server
-            .post("/mock/123/hello")
-            .add_query_param("page", "2")
-            .add_query_param("per_page", "3")
-            .add_header(
-                HeaderName::from_static("token"),
-                HeaderValue::from_static("abc"),
-            )
-            .text("hello world")
-            .await;
-
-        assert_eq!(200, response.status_code());
-        response.assert_json(&json!({
-            "total": 10,
-            "members": [
-                {"name": "member3"},
-                {"name": "member4"},
-                {"name": "member5"},
+            vec![
+                ("page", "2"),
+                ("per_page", "3"),
             ],
-        }));
-        assert_eq!(
-            &headers(vec![
-                ("content-length", "81"),
+            200,
+            vec![
+                ("answer", "42"),
+            ],
+            json!({
+                "total": 10,
+                "members": [
+                    {"name": "member3"},
+                    {"name": "member4"},
+                    {"name": "member5"},
+                ],
+            }),
+        )]
+        #[tokio::test]
+        #[case(
+            ResponseHandler::Paging {
+                status: StatusCode::try_from(200).unwrap(),
+                headers: indexmap! { "answer".to_string() => "42".to_string() },
+                template: JsonTemplate::parse(
+                    json!({
+                        "total": 10,
+                        "members": "$_contents",
+                    }),
+                    vec!["$_contents".to_string()],
+                )
+                .unwrap(),
+                items: vec![
+                    json!({"name": "member0"}),
+                    json!({"name": "member1"}),
+                    json!({"name": "member2"}),
+                    json!({"name": "member3"}),
+                    json!({"name": "member4"}),
+                    json!({"name": "member5"}),
+                    json!({"name": "member6"}),
+                    json!({"name": "member7"}),
+                    json!({"name": "member8"}),
+                    json!({"name": "member9"}),
+                ],
+                page_param: "page".to_string(),
+                per_page_param: "per_page".to_string(),
+                default_per_page: 2,
+            },
+            vec![
+                ("page", "2"),
+            ],
+            200,
+            vec![
+                ("answer", "42"),
+            ],
+            json!({
+                "total": 10,
+                "members": [
+                    {"name": "member2"},
+                    {"name": "member3"},
+                ],
+            }),
+        )]
+        async fn paging_response(
+            #[case] response_handler: ResponseHandler,
+            #[case] query: Vec<(&'static str, &'static str)>,
+            #[case] expected_status_code: u16,
+            #[case] expected_headers: Vec<(&'static str, &'static str)>,
+            #[case] expected_body: serde_json::Value,
+        ) {
+            let app = axum::Router::new();
+            let endpoint = MockEndpoint {
+                method: Method::Post,
+                path: "/hello".to_string(),
+                response: response_handler,
+            };
+
+            let logger = new_logger().await;
+            logger.create_session("123").await.unwrap();
+            let state = AppState { logger };
+
+            let app = endpoint.route_to(app).with_state(state.clone());
+            let server = TestServer::new(app).unwrap();
+
+            let response = query
+                .iter()
+                .fold(server.post("/mock/123/hello"), |req, (k, v)| {
+                    req.add_query_param(k, v)
+                })
+                .add_header(
+                    HeaderName::from_static("token"),
+                    HeaderValue::from_static("abc"),
+                )
+                .text("hello world")
+                .await;
+
+            assert_eq!(expected_status_code, response.status_code());
+            response.assert_json(&expected_body);
+
+            let content_length = expected_body.to_string().len().to_string();
+            let mut header_pairs = vec![
+                ("content-length", content_length.as_str()),
                 ("content-type", "application/json"),
-                ("answer", "42")
-            ]),
-            response.headers()
-        );
+            ];
 
-        let logs = state.logger.get_session_history("123").await.unwrap();
-        assert_eq!(1, logs.len());
+            header_pairs.extend(expected_headers.iter().map(|(k, v)| (*k, *v)));
+            assert_eq!(&headers(header_pairs), response.headers());
 
-        let log = logs.first().unwrap();
-        assert_eq!(Method::Post, log.method);
-        assert_eq!(
-            indexmap! { "content-type".to_string() => "text/plain".to_string(), "token".to_string() => "abc".to_string(), },
-            log.headers
-        );
-        assert_eq!("/hello".to_string(), log.path);
-        assert_eq!(
-            indexmap! { "page".to_string() => "2".to_string(), "per_page".to_string() => "3".to_string() },
-            log.query
-        );
-        assert_eq!("hello world".to_string(), log.body);
+            let logs = state.logger.get_session_history("123").await.unwrap();
+            assert_eq!(1, logs.len(), "log size should be 1");
+
+            let log = logs.first().unwrap();
+            assert_eq!(Method::Post, log.method);
+            assert_eq!(
+                indexmap! { "content-type".to_string() => "text/plain".to_string(), "token".to_string() => "abc".to_string(), },
+                log.headers
+            );
+            assert_eq!("/hello".to_string(), log.path);
+            assert_eq!(
+                query
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect::<IndexMap<String, String>>(),
+                log.query
+            );
+            assert_eq!("hello world".to_string(), log.body);
+        }
     }
 }
