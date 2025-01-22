@@ -48,6 +48,7 @@ pub enum ResponseHandler {
         page_param: String,
         per_page_param: String,
         default_per_page: usize,
+        page_origin: Option<usize>,
         template: JsonTemplate,
         items: Vec<serde_json::Value>,
     },
@@ -77,6 +78,7 @@ impl ResponseHandler {
                 page_param,
                 per_page_param,
                 default_per_page,
+                page_origin,
                 template,
                 items,
             } => {
@@ -92,7 +94,7 @@ impl ResponseHandler {
                 let contents = serde_json::Value::Array(
                     items
                         .iter()
-                        .skip((page - 1) * per_page)
+                        .skip((page - page_origin.unwrap_or(1)) * per_page)
                         .take(per_page)
                         .map(Clone::clone)
                         .collect::<Vec<_>>(),
@@ -332,6 +334,7 @@ mod tests {
                 ],
                 page_param: "page".to_string(),
                 per_page_param: "per_page".to_string(),
+                page_origin: None,
                 default_per_page: 2,
             },
             vec![
@@ -378,7 +381,53 @@ mod tests {
                 ],
                 page_param: "page".to_string(),
                 per_page_param: "per_page".to_string(),
+                page_origin: None,
                 default_per_page: 2,
+            },
+            vec![
+                ("page", "4"),
+                ("per_page", "3"),
+            ],
+            200,
+            vec![
+                ("answer", "42"),
+            ],
+            json!({
+                "total": 10,
+                "members": [
+                    {"name": "member9"},
+                ],
+            }),
+        )]
+        #[tokio::test]
+        #[case(
+            ResponseHandler::Paging {
+                status: StatusCode::try_from(200).unwrap(),
+                headers: indexmap! { "answer".to_string() => "42".to_string() },
+                template: JsonTemplate::parse(
+                    json!({
+                        "total": 10,
+                        "members": "$_contents",
+                    }),
+                    vec!["$_contents".to_string()],
+                )
+                .unwrap(),
+                items: vec![
+                    json!({"name": "member0"}),
+                    json!({"name": "member1"}),
+                    json!({"name": "member2"}),
+                    json!({"name": "member3"}),
+                    json!({"name": "member4"}),
+                    json!({"name": "member5"}),
+                    json!({"name": "member6"}),
+                    json!({"name": "member7"}),
+                    json!({"name": "member8"}),
+                    json!({"name": "member9"}),
+                ],
+                page_param: "page".to_string(),
+                per_page_param: "per_page".to_string(),
+                default_per_page: 2,
+                page_origin: None,
             },
             vec![
                 ("page", "2"),
@@ -392,6 +441,53 @@ mod tests {
                 "members": [
                     {"name": "member2"},
                     {"name": "member3"},
+                ],
+            }),
+        )]
+        #[tokio::test]
+        #[case(
+            ResponseHandler::Paging {
+                status: StatusCode::try_from(200).unwrap(),
+                headers: indexmap! { "answer".to_string() => "42".to_string() },
+                template: JsonTemplate::parse(
+                    json!({
+                        "total": 10,
+                        "members": "$_contents",
+                    }),
+                    vec!["$_contents".to_string()],
+                )
+                .unwrap(),
+                items: vec![
+                    json!({"name": "member0"}),
+                    json!({"name": "member1"}),
+                    json!({"name": "member2"}),
+                    json!({"name": "member3"}),
+                    json!({"name": "member4"}),
+                    json!({"name": "member5"}),
+                    json!({"name": "member6"}),
+                    json!({"name": "member7"}),
+                    json!({"name": "member8"}),
+                    json!({"name": "member9"}),
+                ],
+                page_param: "page".to_string(),
+                per_page_param: "per_page".to_string(),
+                default_per_page: 2,
+                page_origin: Some(0),
+            },
+            vec![
+                ("page", "2"),
+                ("per_page", "3"),
+            ],
+            200,
+            vec![
+                ("answer", "42"),
+            ],
+            json!({
+                "total": 10,
+                "members": [
+                    {"name": "member6"},
+                    {"name": "member7"},
+                    {"name": "member8"},
                 ],
             }),
         )]
