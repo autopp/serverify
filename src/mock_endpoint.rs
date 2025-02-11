@@ -101,8 +101,11 @@ impl ResponseHandler {
                         .collect::<Vec<_>>(),
                 );
 
+                let has_next = per_page * (page - page_origin + 1) < items.len();
                 let body = template
-                    .expand(indexmap! { "$_contents".to_string() => contents })
+                    .expand(
+                        indexmap! { "$_contents".to_string() => contents, "$_has_next".to_string() => serde_json::Value::from(has_next) },
+                    )
                     .to_string();
 
                 headers
@@ -318,7 +321,7 @@ mod tests {
                         "total": 10,
                         "members": "$_contents",
                     }),
-                    vec!["$_contents".to_string()],
+                    vec!["$_contents".to_string(), "$_has_next".to_string()],
                 )
                 .unwrap(),
                 items: vec![
@@ -365,7 +368,7 @@ mod tests {
                         "total": 10,
                         "members": "$_contents",
                     }),
-                    vec!["$_contents".to_string()],
+                    vec!["$_contents".to_string(), "$_has_next".to_string()],
                 )
                 .unwrap(),
                 items: vec![
@@ -410,7 +413,7 @@ mod tests {
                         "total": 10,
                         "members": "$_contents",
                     }),
-                    vec!["$_contents".to_string()],
+                    vec!["$_contents".to_string(), "$_has_next".to_string()],
                 )
                 .unwrap(),
                 items: vec![
@@ -455,7 +458,7 @@ mod tests {
                         "total": 10,
                         "members": "$_contents",
                     }),
-                    vec!["$_contents".to_string()],
+                    vec!["$_contents".to_string(), "$_has_next".to_string()],
                 )
                 .unwrap(),
                 items: vec![
@@ -502,7 +505,7 @@ mod tests {
                         "total": 10,
                         "members": "$_contents",
                     }),
-                    vec!["$_contents".to_string()],
+                    vec!["$_contents".to_string(), "$_has_next".to_string()],
                 )
                 .unwrap(),
                 items: vec![
@@ -533,6 +536,96 @@ mod tests {
                     {"name": "member0"},
                     {"name": "member1"},
                 ],
+            }),
+        )]
+        #[tokio::test]
+        #[case(
+            ResponseHandler::Paging {
+                status: StatusCode::try_from(200).unwrap(),
+                headers: indexmap! { "answer".to_string() => "42".to_string() },
+                template: JsonTemplate::parse(
+                    json!({
+                        "total": 10,
+                        "members": "$_contents",
+                        "has_next": "$_has_next",
+                    }),
+                    vec!["$_contents".to_string(), "$_has_next".to_string()],
+                )
+                .unwrap(),
+                items: vec![
+                    json!({"name": "member0"}),
+                    json!({"name": "member1"}),
+                    json!({"name": "member2"}),
+                    json!({"name": "member3"}),
+                    json!({"name": "member4"}),
+                    json!({"name": "member5"}),
+                    json!({"name": "member6"}),
+                    json!({"name": "member7"}),
+                    json!({"name": "member8"}),
+                    json!({"name": "member9"}),
+                ],
+                page_param: "page".to_string(),
+                per_page_param: "per_page".to_string(),
+                default_per_page: 2,
+                page_origin: Some(0),
+            },
+            vec![],
+            200,
+            vec![
+                ("answer", "42"),
+            ],
+            json!({
+                "total": 10,
+                "members": [
+                    {"name": "member0"},
+                    {"name": "member1"},
+                ],
+                "has_next": true,
+            }),
+        )]
+        #[tokio::test]
+        #[case(
+            ResponseHandler::Paging {
+                status: StatusCode::try_from(200).unwrap(),
+                headers: indexmap! { "answer".to_string() => "42".to_string() },
+                template: JsonTemplate::parse(
+                    json!({
+                        "total": 10,
+                        "members": "$_contents",
+                        "has_next": "$_has_next",
+                    }),
+                    vec!["$_contents".to_string(), "$_has_next".to_string()],
+                )
+                .unwrap(),
+                items: vec![
+                    json!({"name": "member0"}),
+                    json!({"name": "member1"}),
+                    json!({"name": "member2"}),
+                    json!({"name": "member3"}),
+                    json!({"name": "member4"}),
+                    json!({"name": "member5"}),
+                    json!({"name": "member6"}),
+                    json!({"name": "member7"}),
+                    json!({"name": "member8"}),
+                    json!({"name": "member9"}),
+                ],
+                page_param: "page".to_string(),
+                per_page_param: "per_page".to_string(),
+                default_per_page: 2,
+                page_origin: Some(0),
+            },
+            vec![("page", "4")],
+            200,
+            vec![
+                ("answer", "42"),
+            ],
+            json!({
+                "total": 10,
+                "members": [
+                    {"name": "member8"},
+                    {"name": "member9"},
+                ],
+                "has_next": false,
             }),
         )]
         async fn paging_response(
