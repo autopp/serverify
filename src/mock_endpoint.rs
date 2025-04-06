@@ -55,8 +55,16 @@ pub enum ResponseHandler {
 }
 
 impl ResponseHandler {
+    pub fn new_static(status: StatusCode, headers: IndexMap<String, String>, body: String) -> Self {
+        Self::Static {
+            status,
+            headers,
+            body,
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
-    fn new_paging(
+    pub fn new_paging(
         status: StatusCode,
         headers: IndexMap<String, String>,
         page_param: String,
@@ -291,11 +299,11 @@ mod tests {
             let endpoint = MockEndpoint {
                 method: Method::Post,
                 path: "/hello".to_string(),
-                response: ResponseHandler::Static {
-                    status: StatusCode::try_from(200).unwrap(),
-                    headers: indexmap! { "answer".to_string() => "42".to_string() },
-                    body: "Hello, world!".to_string(),
-                },
+                response: ResponseHandler::new_static(
+                    StatusCode::try_from(200).unwrap(),
+                    indexmap! { "answer".to_string() => "42".to_string() },
+                    "Hello, world!".to_string(),
+                ),
             };
 
             let logger = new_logger().await;

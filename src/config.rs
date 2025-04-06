@@ -36,11 +36,11 @@ pub fn parse_config(src: &str) -> Result<Vec<MockEndpoint>, String> {
                         Ok(MockEndpoint {
                             method,
                             path: path.clone(),
-                            response: ResponseHandler::Static {
+                            response: ResponseHandler::new_static(
                                 status,
-                                headers: endpoint.response.headers.unwrap_or_default(),
-                                body: endpoint.response.body,
-                            },
+                                endpoint.response.headers.unwrap_or_default(),
+                                endpoint.response.body,
+                            ),
                         })
                     })
                 })
@@ -80,29 +80,29 @@ paths:
         MockEndpoint {
             method: Method::Get,
             path: "/hello".to_string(),
-            response: ResponseHandler::Static {
-                status: StatusCode::try_from(200).unwrap(),
-                headers: indexmap! { "Content-Type".to_string() => "text/plain".to_string() },
-                body: "Hello, world!".to_string(),
-            },
+            response: ResponseHandler::new_static(
+                StatusCode::try_from(200).unwrap(),
+                indexmap! { "Content-Type".to_string() => "text/plain".to_string() },
+                "Hello, world!".to_string(),
+            ),
         },
         MockEndpoint {
             method: Method::Post,
             path: "/hello".to_string(),
-            response: ResponseHandler::Static {
-                status: StatusCode::try_from(204).unwrap(),
-                headers: indexmap! {},
-                body: "".to_string(),
-            },
+            response: ResponseHandler::new_static(
+                StatusCode::try_from(204).unwrap(),
+                indexmap! {},
+                "".to_string(),
+            ),
         },
         MockEndpoint {
             method: Method::Get,
             path: "/goodbye".to_string(),
-            response: ResponseHandler::Static {
-                status: StatusCode::try_from(200).unwrap(),
-                headers: indexmap! { "Content-Type".to_string() => "text/plain".to_string() },
-                body: "Goodbye, world!".to_string(),
-            },
+            response: ResponseHandler::new_static(
+                StatusCode::try_from(200).unwrap(),
+                indexmap! { "Content-Type".to_string() => "text/plain".to_string() },
+                "Goodbye, world!".to_string(),
+            ),
         },
     ]))]
     fn test_parse_config(#[case] src: &str, #[case] expected: Result<Vec<MockEndpoint>, String>) {
