@@ -17,10 +17,14 @@ struct EndpointConfig {
 }
 
 #[derive(Deserialize)]
-struct ResponseConfig {
-    pub status: u16,
-    pub headers: Option<IndexMap<String, String>>,
-    pub body: String,
+#[serde(tag = "type")]
+enum ResponseConfig {
+    #[serde(rename = "static")]
+    Static {
+        status: u16,
+        headers: Option<IndexMap<String, String>>,
+        body: String,
+    },
 }
 
 pub fn parse_config(src: &str) -> Result<Vec<MockEndpoint>, String> {
@@ -32,15 +36,21 @@ pub fn parse_config(src: &str) -> Result<Vec<MockEndpoint>, String> {
                 .into_iter()
                 .flat_map(|(path, methods)| {
                     methods.into_iter().map(move |(method, endpoint)| {
-                        let status = StatusCode::try_from(endpoint.response.status)?;
+                        let response_handler = match endpoint.response {
+                            ResponseConfig::Static {
+                                status,
+                                headers,
+                                body,
+                            } => ResponseHandler::new_static(
+                                StatusCode::try_from(status)?,
+                                headers.unwrap_or_default(),
+                                body,
+                            ),
+                        };
                         Ok(MockEndpoint {
                             method,
                             path: path.clone(),
-                            response: ResponseHandler::new_static(
-                                status,
-                                endpoint.response.headers.unwrap_or_default(),
-                                endpoint.response.body,
-                            ),
+                            response: response_handler,
                         })
                     })
                 })
@@ -61,17 +71,20 @@ paths:
     /hello:
         get:
             response:
+                type: static
                 status: 200
                 headers:
                     Content-Type: text/plain
                 body: "Hello, world!"
         post:
             response:
+                type: static
                 status: 204
                 body: ""
     /goodbye:
         get:
             response:
+                type: static
                 status: 200
                 headers:
                     Content-Type: text/plain
