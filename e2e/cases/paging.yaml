@@ -1,0 +1,72 @@
+tests:
+  - name: request to default page
+    processes:
+      server: &server
+        command:
+          - $env: SERVERIFY
+          - $tmp_file:
+              filename: serverify.yaml
+              contents:
+                $yaml:
+                  paths:
+                    /friends:
+                      get:
+                        response:
+                          type: paging
+                          status: 200
+                          page_param: p
+                          per_page_param: items
+                          default_per_page: 2
+                          page_origin: 0
+                          template:
+                              friends: $_contents
+                          items:
+                              - name: Alice
+                                age: 10
+                              - name: Bob
+                                age: 20
+                              - name: Carol
+                                age: 30
+        background:
+          wait_for:
+            type: http
+            port: 8080
+            path: /health
+            initial_delay: 100ms
+            interval: 1
+            timeout: 10
+      request:
+        command:
+          - curl
+          - http://localhost:8080/mock/default/friends
+    expect:
+      processes:
+        request:
+          status:
+            eq: 0
+          stdout:
+            eq_json:
+              $json:
+                friends:
+                  - name: Alice
+                    age: 10
+                  - name: Bob
+                    age: 20
+  - name: request with page parameters
+    processes:
+      server: *server
+      request:
+        command:
+          - curl
+          - http://localhost:8080/mock/default/friends?p=2&items=1
+    expect:
+      processes:
+        request:
+          status:
+            eq: 0
+          stdout:
+            eq_json:
+              $json:
+                friends:
+                  - name: Carol
+                    age: 30
