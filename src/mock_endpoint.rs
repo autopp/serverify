@@ -8,12 +8,13 @@ use axum::{
 };
 use chrono::Local;
 use futures::TryStreamExt;
-use indexmap::IndexMap;
+use indexmap::{indexmap, IndexMap};
 use serde::Deserialize;
 use tokio::io::AsyncReadExt;
 use tokio_util::io::StreamReader;
 
 use crate::{
+    json_template::JsonTemplate,
     method::Method,
     request_logger::{LoggerError, RequestLog},
     state::AppState,
@@ -41,10 +42,60 @@ pub enum ResponseHandler {
         headers: IndexMap<String, String>,
         body: String,
     },
+    Paging {
+        status: StatusCode,
+        headers: IndexMap<String, String>,
+        page_param: String,
+        per_page_param: String,
+        default_per_page: usize,
+        page_origin: Option<usize>,
+        template: JsonTemplate,
+        items: Vec<serde_json::Value>,
+    },
 }
 
 impl ResponseHandler {
-    pub fn respond(&self) -> Result<axum::http::Response<String>, (u16, String)> {
+    pub fn new_static(status: StatusCode, headers: IndexMap<String, String>, body: String) -> Self {
+        Self::Static {
+            status,
+            headers,
+            body,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_paging(
+        status: StatusCode,
+        headers: IndexMap<String, String>,
+        page_param: String,
+        per_page_param: String,
+        default_per_page: usize,
+        page_origin: Option<usize>,
+        template: serde_json::Value,
+        items: Vec<serde_json::Value>,
+    ) -> Result<Self, String> {
+        let json_template = JsonTemplate::parse(
+            template,
+            vec!["$_contents".to_string(), "$_has_next".to_string()],
+        )?;
+        Ok(Self::Paging {
+            status,
+            headers,
+            page_param,
+            per_page_param,
+            default_per_page,
+            page_origin,
+            template: json_template,
+            items,
+        })
+    }
+}
+
+impl ResponseHandler {
+    pub fn respond(
+        &self,
+        query: &IndexMap<String, String>,
+    ) -> Result<axum::http::Response<String>, (u16, String)> {
         match self {
             ResponseHandler::Static {
                 status,
@@ -58,6 +109,52 @@ impl ResponseHandler {
                 .status(status.0)
                 .body(body.clone())
                 .map_err(|e| (500, e.to_string())),
+            ResponseHandler::Paging {
+                status,
+                headers,
+                page_param,
+                per_page_param,
+                default_per_page,
+                page_origin,
+                template,
+                items,
+            } => {
+                let page_origin = page_origin.unwrap_or(1);
+                let page = query
+                    .get(page_param)
+                    .and_then(|page| page.parse::<usize>().ok())
+                    .unwrap_or(page_origin);
+                let per_page = query
+                    .get(per_page_param)
+                    .and_then(|page| page.parse::<usize>().ok())
+                    .unwrap_or(*default_per_page);
+
+                let contents = serde_json::Value::Array(
+                    items
+                        .iter()
+                        .skip((page - page_origin) * per_page)
+                        .take(per_page)
+                        .map(Clone::clone)
+                        .collect::<Vec<_>>(),
+                );
+
+                let has_next = per_page * (page - page_origin + 1) < items.len();
+                let body = template
+                    .expand(
+                        indexmap! { "$_contents".to_string() => contents, "$_has_next".to_string() => serde_json::Value::from(has_next) },
+                    )
+                    .to_string();
+
+                headers
+                    .into_iter()
+                    .fold(
+                        axum::http::Response::builder().header("content-type", "application/json"),
+                        |builder, (key, value)| builder.header(key, value),
+                    )
+                    .status(status.0)
+                    .body(body.clone())
+                    .map_err(|e| (500, e.to_string()))
+            }
         }
     }
 }
@@ -94,6 +191,9 @@ impl MockEndpoint {
                         Path::from_request_parts(&mut parts, &state)
                             .await
                             .map_err(|err| (500, err.to_string()))?;
+                    let Query(query) = Query::<IndexMap<String, String>>::try_from_uri(&parts.uri)
+                        .map_err(|err| (500, err.to_string()))?;
+
                     if serverify_session != "default" {
                         let method = match parts.method {
                             axum::http::Method::GET => Method::Get,
@@ -114,10 +214,6 @@ impl MockEndpoint {
                             .collect::<Result<IndexMap<String, String>, (u16, String)>>()?;
                         let path = parts.uri.path().to_string();
 
-                        let Query(query) =
-                            Query::<IndexMap<String, String>>::try_from_uri(&parts.uri)
-                                .map_err(|err| (500, err.to_string()))?;
-
                         let mut stream = StreamReader::new(
                             body.into_data_stream()
                                 .map_err(|err| std::io::Error::new(ErrorKind::Other, err)),
@@ -133,7 +229,7 @@ impl MockEndpoint {
                             method,
                             headers,
                             path,
-                            query,
+                            query: query.clone(),
                             body: String::from_utf8_lossy(&buf).to_string(),
                             requested_at: Local::now(),
                         };
@@ -149,7 +245,7 @@ impl MockEndpoint {
                     }
 
                     // respond
-                    self.response.respond()
+                    self.response.respond(&query)
                 }
                 .await
                 .unwrap_or_else(|(status, message)| {
@@ -170,7 +266,7 @@ impl MockEndpoint {
 
 #[cfg(test)]
 mod tests {
-    use std::vec;
+    use std::{str::FromStr, vec};
 
     use crate::request_logger::testutil::new_logger;
 
@@ -180,66 +276,431 @@ mod tests {
     use axum_test::TestServer;
 
     use indexmap::indexmap;
-    use pretty_assertions::assert_eq;
+    use serde_json::json;
 
-    fn headers(kvs: Vec<(&'static str, &'static str)>) -> HeaderMap {
-        HeaderMap::from_iter(
-            kvs.into_iter()
-                .map(|(k, v)| (HeaderName::from_static(k), HeaderValue::from_static(v))),
-        )
+    fn headers(kvs: Vec<(&str, &str)>) -> HeaderMap {
+        HeaderMap::from_iter(kvs.into_iter().map(|(k, v)| {
+            (
+                HeaderName::from_str(k).unwrap(),
+                HeaderValue::from_str(v).unwrap(),
+            )
+        }))
     }
 
-    #[tokio::test]
-    async fn route_to() {
-        let app = axum::Router::new();
-        let endpoint = MockEndpoint {
-            method: Method::Post,
-            path: "/hello".to_string(),
-            response: ResponseHandler::Static {
-                status: StatusCode::try_from(200).unwrap(),
-                headers: indexmap! { "answer".to_string() => "42".to_string() },
-                body: "Hello, world!".to_string(),
-            },
-        };
+    mod route_to {
+        use super::*;
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
 
-        let logger = new_logger().await;
-        logger.create_session("123").await.unwrap();
-        let state = AppState { logger };
+        #[rstest]
+        #[tokio::test]
+        async fn route_to_static() {
+            let app = axum::Router::new();
+            let endpoint = MockEndpoint {
+                method: Method::Post,
+                path: "/hello".to_string(),
+                response: ResponseHandler::new_static(
+                    StatusCode::try_from(200).unwrap(),
+                    indexmap! { "answer".to_string() => "42".to_string() },
+                    "Hello, world!".to_string(),
+                ),
+            };
 
-        let app = endpoint.route_to(app).with_state(state.clone());
-        let server = TestServer::new(app).unwrap();
-        let response = server
-            .post("/mock/123/hello")
-            .add_query_param("foo", "x")
-            .add_query_param("bar", "y")
-            .add_header(
-                HeaderName::from_static("token"),
-                HeaderValue::from_static("abc"),
-            )
-            .text("hello world")
-            .await;
+            let logger = new_logger().await;
+            logger.create_session("123").await.unwrap();
+            let state = AppState { logger };
 
-        assert_eq!(200, response.status_code());
-        assert_eq!("Hello, world!", response.text());
-        assert_eq!(
-            &headers(vec![("content-length", "13"), ("answer", "42")]),
-            response.headers()
-        );
+            let app = endpoint.route_to(app).with_state(state.clone());
+            let server = TestServer::new(app).unwrap();
+            let response = server
+                .post("/mock/123/hello")
+                .add_query_param("foo", "x")
+                .add_query_param("bar", "y")
+                .add_header(
+                    HeaderName::from_static("token"),
+                    HeaderValue::from_static("abc"),
+                )
+                .text("hello world")
+                .await;
 
-        let logs = state.logger.get_session_history("123").await.unwrap();
-        assert_eq!(1, logs.len());
+            assert_eq!(200, response.status_code());
+            assert_eq!("Hello, world!", response.text());
+            assert_eq!(
+                &headers(vec![("content-length", "13"), ("answer", "42")]),
+                response.headers()
+            );
 
-        let log = logs.first().unwrap();
-        assert_eq!(Method::Post, log.method);
-        assert_eq!(
-            indexmap! { "content-type".to_string() => "text/plain".to_string(), "token".to_string() => "abc".to_string(), },
-            log.headers
-        );
-        assert_eq!("/hello".to_string(), log.path);
-        assert_eq!(
-            indexmap! { "foo".to_string() => "x".to_string(), "bar".to_string() => "y".to_string() },
-            log.query
-        );
-        assert_eq!("hello world".to_string(), log.body);
+            let logs = state.logger.get_session_history("123").await.unwrap();
+            assert_eq!(1, logs.len());
+
+            let log = logs.first().unwrap();
+            assert_eq!(Method::Post, log.method);
+            assert_eq!(
+                indexmap! { "content-type".to_string() => "text/plain".to_string(), "token".to_string() => "abc".to_string(), },
+                log.headers
+            );
+            assert_eq!("/hello".to_string(), log.path);
+            assert_eq!(
+                indexmap! { "foo".to_string() => "x".to_string(), "bar".to_string() => "y".to_string() },
+                log.query
+            );
+            assert_eq!("hello world".to_string(), log.body);
+        }
+
+        #[rstest]
+        #[tokio::test]
+        #[case(
+            ResponseHandler::new_paging(
+                StatusCode::try_from(200).unwrap(),
+                indexmap! { "answer".to_string() => "42".to_string() },
+                "page".to_string(),
+                "per_page".to_string(),
+                2,
+                None,
+                json!({
+                    "total": 10,
+                    "members": "$_contents",
+                }),
+                vec![
+                    json!({"name": "member0"}),
+                    json!({"name": "member1"}),
+                    json!({"name": "member2"}),
+                    json!({"name": "member3"}),
+                    json!({"name": "member4"}),
+                    json!({"name": "member5"}),
+                    json!({"name": "member6"}),
+                    json!({"name": "member7"}),
+                    json!({"name": "member8"}),
+                    json!({"name": "member9"}),
+                ],
+            ).unwrap(),
+            vec![
+                ("page", "2"),
+                ("per_page", "3"),
+            ],
+            200,
+            vec![
+                ("answer", "42"),
+            ],
+            json!({
+                "total": 10,
+                "members": [
+                    {"name": "member3"},
+                    {"name": "member4"},
+                    {"name": "member5"},
+                ],
+            }),
+        )]
+        #[tokio::test]
+        #[case(
+            ResponseHandler::new_paging(
+                StatusCode::try_from(200).unwrap(),
+                indexmap! { "answer".to_string() => "42".to_string() },
+                "page".to_string(),
+                "per_page".to_string(),
+                2,
+                None,
+                json!({
+                        "total": 10,
+                        "members": "$_contents",
+                }),
+                vec![
+                    json!({"name": "member0"}),
+                    json!({"name": "member1"}),
+                    json!({"name": "member2"}),
+                    json!({"name": "member3"}),
+                    json!({"name": "member4"}),
+                    json!({"name": "member5"}),
+                    json!({"name": "member6"}),
+                    json!({"name": "member7"}),
+                    json!({"name": "member8"}),
+                    json!({"name": "member9"}),
+                ]
+            ).unwrap(),
+            vec![
+                ("page", "4"),
+                ("per_page", "3"),
+            ],
+            200,
+            vec![
+                ("answer", "42"),
+            ],
+            json!({
+                "total": 10,
+                "members": [
+                    {"name": "member9"},
+                ],
+            }),
+        )]
+        #[tokio::test]
+        #[case(
+            ResponseHandler::new_paging(
+                StatusCode::try_from(200).unwrap(),
+                indexmap! { "answer".to_string() => "42".to_string() },
+                "page".to_string(),
+                "per_page".to_string(),
+                2,
+                None,
+                json!({
+                        "total": 10,
+                        "members": "$_contents",
+                }),
+                vec![
+                    json!({"name": "member0"}),
+                    json!({"name": "member1"}),
+                    json!({"name": "member2"}),
+                    json!({"name": "member3"}),
+                    json!({"name": "member4"}),
+                    json!({"name": "member5"}),
+                    json!({"name": "member6"}),
+                    json!({"name": "member7"}),
+                    json!({"name": "member8"}),
+                    json!({"name": "member9"}),
+                ],
+            ).unwrap(),
+            vec![
+                ("page", "2"),
+            ],
+            200,
+            vec![
+                ("answer", "42"),
+            ],
+            json!({
+                "total": 10,
+                "members": [
+                    {"name": "member2"},
+                    {"name": "member3"},
+                ],
+            }),
+        )]
+        #[tokio::test]
+        #[case(
+            ResponseHandler::new_paging(
+                StatusCode::try_from(200).unwrap(),
+                indexmap! { "answer".to_string() => "42".to_string() },
+                "page".to_string(),
+                "per_page".to_string(),
+                2,
+                Some(0),
+                json!({
+                    "total": 10,
+                    "members": "$_contents",
+                }),
+                vec![
+                    json!({"name": "member0"}),
+                    json!({"name": "member1"}),
+                    json!({"name": "member2"}),
+                    json!({"name": "member3"}),
+                    json!({"name": "member4"}),
+                    json!({"name": "member5"}),
+                    json!({"name": "member6"}),
+                    json!({"name": "member7"}),
+                    json!({"name": "member8"}),
+                    json!({"name": "member9"}),
+                ],
+            ).unwrap(),
+            vec![
+                ("page", "2"),
+                ("per_page", "3"),
+            ],
+            200,
+            vec![
+                ("answer", "42"),
+            ],
+            json!({
+                "total": 10,
+                "members": [
+                    {"name": "member6"},
+                    {"name": "member7"},
+                    {"name": "member8"},
+                ],
+            }),
+        )]
+        #[tokio::test]
+        #[case(
+            ResponseHandler::new_paging(
+                StatusCode::try_from(200).unwrap(),
+                indexmap! { "answer".to_string() => "42".to_string() },
+                "page".to_string(),
+                "per_page".to_string(),
+                2,
+                Some(0),
+                json!({
+                    "total": 10,
+                    "members": "$_contents",
+                }),
+                vec![
+                    json!({"name": "member0"}),
+                    json!({"name": "member1"}),
+                    json!({"name": "member2"}),
+                    json!({"name": "member3"}),
+                    json!({"name": "member4"}),
+                    json!({"name": "member5"}),
+                    json!({"name": "member6"}),
+                    json!({"name": "member7"}),
+                    json!({"name": "member8"}),
+                    json!({"name": "member9"}),
+                ],
+            ).unwrap(),
+            vec![],
+            200,
+            vec![
+                ("answer", "42"),
+            ],
+            json!({
+                "total": 10,
+                "members": [
+                    {"name": "member0"},
+                    {"name": "member1"},
+                ],
+            }),
+        )]
+        #[tokio::test]
+        #[case(
+            ResponseHandler::new_paging(
+                StatusCode::try_from(200).unwrap(),
+                indexmap! { "answer".to_string() => "42".to_string() },
+                "page".to_string(),
+                "per_page".to_string(),
+                2,
+                Some(0),
+                json!({
+                    "total": 10,
+                    "members": "$_contents",
+                    "has_next": "$_has_next",
+                }),
+                vec![
+                    json!({"name": "member0"}),
+                    json!({"name": "member1"}),
+                    json!({"name": "member2"}),
+                    json!({"name": "member3"}),
+                    json!({"name": "member4"}),
+                    json!({"name": "member5"}),
+                    json!({"name": "member6"}),
+                    json!({"name": "member7"}),
+                    json!({"name": "member8"}),
+                    json!({"name": "member9"}),
+                ],
+            ).unwrap(),
+            vec![],
+            200,
+            vec![
+                ("answer", "42"),
+            ],
+            json!({
+                "total": 10,
+                "members": [
+                    {"name": "member0"},
+                    {"name": "member1"},
+                ],
+                "has_next": true,
+            }),
+        )]
+        #[tokio::test]
+        #[case(
+            ResponseHandler::new_paging(
+                StatusCode::try_from(200).unwrap(),
+                indexmap! { "answer".to_string() => "42".to_string() },
+
+                "page".to_string(),
+                "per_page".to_string(),
+                2,
+                Some(0),
+                json!({
+                    "total": 10,
+                    "members": "$_contents",
+                    "has_next": "$_has_next",
+                }),
+                vec![
+                    json!({"name": "member0"}),
+                    json!({"name": "member1"}),
+                    json!({"name": "member2"}),
+                    json!({"name": "member3"}),
+                    json!({"name": "member4"}),
+                    json!({"name": "member5"}),
+                    json!({"name": "member6"}),
+                    json!({"name": "member7"}),
+                    json!({"name": "member8"}),
+                    json!({"name": "member9"}),
+                ],
+            ).unwrap(),
+            vec![("page", "4")],
+            200,
+            vec![
+                ("answer", "42"),
+            ],
+            json!({
+                "total": 10,
+                "members": [
+                    {"name": "member8"},
+                    {"name": "member9"},
+                ],
+                "has_next": false,
+            }),
+        )]
+        async fn paging_response(
+            #[case] response_handler: ResponseHandler,
+            #[case] query: Vec<(&'static str, &'static str)>,
+            #[case] expected_status_code: u16,
+            #[case] expected_headers: Vec<(&'static str, &'static str)>,
+            #[case] expected_body: serde_json::Value,
+        ) {
+            let app = axum::Router::new();
+            let endpoint = MockEndpoint {
+                method: Method::Post,
+                path: "/hello".to_string(),
+                response: response_handler,
+            };
+
+            let logger = new_logger().await;
+            logger.create_session("123").await.unwrap();
+            let state = AppState { logger };
+
+            let app = endpoint.route_to(app).with_state(state.clone());
+            let server = TestServer::new(app).unwrap();
+
+            let response = query
+                .iter()
+                .fold(server.post("/mock/123/hello"), |req, (k, v)| {
+                    req.add_query_param(k, v)
+                })
+                .add_header(
+                    HeaderName::from_static("token"),
+                    HeaderValue::from_static("abc"),
+                )
+                .text("hello world")
+                .await;
+
+            assert_eq!(expected_status_code, response.status_code());
+            response.assert_json(&expected_body);
+
+            let content_length = expected_body.to_string().len().to_string();
+            let mut header_pairs = vec![
+                ("content-length", content_length.as_str()),
+                ("content-type", "application/json"),
+            ];
+
+            header_pairs.extend(expected_headers.iter().map(|(k, v)| (*k, *v)));
+            assert_eq!(&headers(header_pairs), response.headers());
+
+            let logs = state.logger.get_session_history("123").await.unwrap();
+            assert_eq!(1, logs.len(), "log size should be 1");
+
+            let log = logs.first().unwrap();
+            assert_eq!(Method::Post, log.method);
+            assert_eq!(
+                indexmap! { "content-type".to_string() => "text/plain".to_string(), "token".to_string() => "abc".to_string(), },
+                log.headers
+            );
+            assert_eq!("/hello".to_string(), log.path);
+            assert_eq!(
+                query
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect::<IndexMap<String, String>>(),
+                log.query
+            );
+            assert_eq!("hello world".to_string(), log.body);
+        }
     }
 }

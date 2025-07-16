@@ -12,6 +12,7 @@ tests:
                     /hello:
                       get:
                         response:
+                          type: static
                           status: 200
                           body: Hello, World!
         background:
@@ -48,6 +49,7 @@ tests:
                     /hello:
                       get:
                         response:
+                          type: static
                           status: 200
                           body: Hello, World!
         background:
