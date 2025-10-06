@@ -1,5 +1,3 @@
-use std::io::ErrorKind;
-
 use axum::{
     body::Body,
     extract::{FromRequestParts, Path, Query, Request, State},
@@ -215,8 +213,7 @@ impl MockEndpoint {
                         let path = parts.uri.path().to_string();
 
                         let mut stream = StreamReader::new(
-                            body.into_data_stream()
-                                .map_err(|err| std::io::Error::new(ErrorKind::Other, err)),
+                            body.into_data_stream().map_err(std::io::Error::other),
                         );
 
                         let mut buf: Vec<u8> = vec![];
