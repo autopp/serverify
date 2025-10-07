@@ -100,13 +100,13 @@ mod tests {
     #[case(json!([{"index": "$_index", "value": 41}, {"index": 1, "value": "$_value"}]), indexmap! { "$_index".to_string() => json!(0), "$_value".to_string() => json!(42) }, json!([{"index": 0, "value": 41}, {"index": 1, "value": 42}]))]
     fn success_cases(
         #[case] template: serde_json::Value,
-        #[case] value: IndexMap<String, Value>,
+        #[case] values: IndexMap<String, Value>,
         #[case] expected: serde_json::Value,
     ) {
         let template =
             JsonTemplate::parse(template, vec!["$_index".to_string(), "$_value".to_string()])
                 .unwrap();
-        let actual = template.expand(value);
+        let actual = template.expand(values);
         assert_eq!(expected, actual);
     }
 }
