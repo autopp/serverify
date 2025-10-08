@@ -1,4 +1,5 @@
 use indexmap::IndexMap;
+use minijinja::Environment;
 use serde_json::Value;
 
 #[derive(Clone)]
@@ -11,14 +12,19 @@ pub struct JsonTemplate {
 #[derive(Clone)]
 #[cfg_attr(test, derive(Debug, PartialEq))]
 enum PlaceholderPath {
-    PlaceHolder(String),
+    ValuePlaceholder(String),
+    TextPlaceholder(String),
     Index(usize, Box<PlaceholderPath>),
     Field(String, Box<PlaceholderPath>),
 }
 
 impl JsonTemplate {
-    pub fn parse(template: serde_json::Value, placeholders: Vec<String>) -> Result<Self, String> {
-        let placeholder_paths = Self::traverse(&template, &placeholders);
+    pub fn parse(
+        template: serde_json::Value,
+        value_placeholders: Vec<String>,
+        text_placeholder: String,
+    ) -> Result<Self, String> {
+        let placeholder_paths = Self::traverse(&template, &value_placeholders, &text_placeholder);
 
         Ok(Self {
             template,
@@ -36,27 +42,36 @@ impl JsonTemplate {
         expanded
     }
 
-    fn traverse(template: &serde_json::Value, placeholders: &[String]) -> Vec<PlaceholderPath> {
+    fn traverse(
+        template: &serde_json::Value,
+        placeholders: &[String],
+        text_placeholder: &str,
+    ) -> Vec<PlaceholderPath> {
         match template {
-            serde_json::Value::Object(obj) => obj
-                .iter()
-                .flat_map(|(key, value)| {
-                    Self::traverse(value, placeholders)
-                        .into_iter()
-                        .map(|path| PlaceholderPath::Field(key.to_string(), Box::new(path)))
-                })
-                .collect(),
+            serde_json::Value::Object(obj) => {
+                if let Some(serde_json::Value::String(text)) = obj.get(text_placeholder) {
+                    vec![PlaceholderPath::TextPlaceholder(text.clone())]
+                } else {
+                    obj.iter()
+                        .flat_map(|(key, value)| {
+                            Self::traverse(value, placeholders, text_placeholder)
+                                .into_iter()
+                                .map(|path| PlaceholderPath::Field(key.to_string(), Box::new(path)))
+                        })
+                        .collect()
+                }
+            }
             serde_json::Value::Array(arr) => arr
                 .iter()
                 .enumerate()
                 .flat_map(|(index, value)| {
-                    Self::traverse(value, placeholders)
+                    Self::traverse(value, placeholders, text_placeholder)
                         .into_iter()
                         .map(move |path| PlaceholderPath::Index(index, Box::new(path)))
                 })
                 .collect(),
             serde_json::Value::String(s) if placeholders.contains(s) => {
-                vec![PlaceholderPath::PlaceHolder(s.clone())]
+                vec![PlaceholderPath::ValuePlaceholder(s.clone())]
             }
             _ => vec![],
         }
@@ -68,9 +83,17 @@ impl JsonTemplate {
         placeholder_path: &PlaceholderPath,
     ) {
         match placeholder_path {
-            PlaceholderPath::PlaceHolder(placeholder) => {
-                let value = values.get(placeholder).unwrap();
+            PlaceholderPath::ValuePlaceholder(value) => {
+                let value = values.get(value).unwrap();
                 *expanded = value.clone();
+            }
+            PlaceholderPath::TextPlaceholder(text) => {
+                let mut env = Environment::new();
+                env.add_template("template", text).unwrap();
+                let tmpl = env.get_template("template").unwrap();
+                let rendered = tmpl.render(values).unwrap();
+
+                *expanded = Value::String(rendered);
             }
             PlaceholderPath::Index(index, path) => {
                 let expanded = expanded.as_array_mut().unwrap();
@@ -98,14 +121,18 @@ mod tests {
     #[case(json!("$_value"), indexmap! { "$_value".to_string() => json!([1, 2, 3]) }, json!([1, 2, 3]))]
     #[case(json!({"a": 1, "b": "$_value"}), indexmap! { "$_value".to_string() => json!(42) }, json!({"a": 1, "b": 42}))]
     #[case(json!([{"index": "$_index", "value": 41}, {"index": 1, "value": "$_value"}]), indexmap! { "$_index".to_string() => json!(0), "$_value".to_string() => json!(42) }, json!([{"index": 0, "value": 41}, {"index": 1, "value": 42}]))]
+    #[case(json!({"text": { "$_text": "index: {{ _index }}, value: {{ _value }}" }}), indexmap! { "_index".to_string() => json!(0), "_value".to_string() => json!(42) }, json!({"text": "index: 0, value: 42"}))]
     fn success_cases(
         #[case] template: serde_json::Value,
         #[case] values: IndexMap<String, Value>,
         #[case] expected: serde_json::Value,
     ) {
-        let template =
-            JsonTemplate::parse(template, vec!["$_index".to_string(), "$_value".to_string()])
-                .unwrap();
+        let template = JsonTemplate::parse(
+            template,
+            vec!["$_index".to_string(), "$_value".to_string()],
+            "$_text".to_string(),
+        )
+        .unwrap();
         let actual = template.expand(values);
         assert_eq!(expected, actual);
     }

@@ -75,6 +75,7 @@ impl ResponseHandler {
         let json_template = JsonTemplate::parse(
             template,
             vec!["$_contents".to_string(), "$_has_next".to_string()],
+            "$_text".to_string(),
         )?;
         Ok(Self::Paging {
             status,
