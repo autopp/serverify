@@ -74,7 +74,7 @@ impl ResponseHandler {
     ) -> Result<Self, String> {
         let json_template = JsonTemplate::parse(
             template,
-            vec!["$_contents".to_string(), "$_has_next".to_string()],
+            vec!["_contents".to_string(), "_has_next".to_string()],
             "$_text".to_string(),
         )?;
         Ok(Self::Paging {
@@ -140,7 +140,7 @@ impl ResponseHandler {
                 let has_next = per_page * (page - page_origin + 1) < items.len();
                 let body = template
                     .expand(
-                        indexmap! { "$_contents".to_string() => contents, "$_has_next".to_string() => serde_json::Value::from(has_next) },
+                        indexmap! { "_contents".to_string() => contents, "_has_next".to_string() => serde_json::Value::from(has_next) },
                     )
                     .to_string();
 

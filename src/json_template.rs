@@ -70,8 +70,10 @@ impl JsonTemplate {
                         .map(move |path| PlaceholderPath::Index(index, Box::new(path)))
                 })
                 .collect(),
-            serde_json::Value::String(s) if placeholders.contains(s) => {
-                vec![PlaceholderPath::ValuePlaceholder(s.clone())]
+            serde_json::Value::String(s)
+                if s.starts_with("$") && placeholders.contains(&s[1..].to_string()) =>
+            {
+                vec![PlaceholderPath::ValuePlaceholder(s[1..].to_string())]
             }
             _ => vec![],
         }
@@ -118,9 +120,9 @@ mod tests {
     use serde_json::json;
 
     #[rstest]
-    #[case(json!("$_value"), indexmap! { "$_value".to_string() => json!([1, 2, 3]) }, json!([1, 2, 3]))]
-    #[case(json!({"a": 1, "b": "$_value"}), indexmap! { "$_value".to_string() => json!(42) }, json!({"a": 1, "b": 42}))]
-    #[case(json!([{"index": "$_index", "value": 41}, {"index": 1, "value": "$_value"}]), indexmap! { "$_index".to_string() => json!(0), "$_value".to_string() => json!(42) }, json!([{"index": 0, "value": 41}, {"index": 1, "value": 42}]))]
+    #[case(json!("$_value"), indexmap! { "_value".to_string() => json!([1, 2, 3]) }, json!([1, 2, 3]))]
+    #[case(json!({"a": 1, "b": "$_value"}), indexmap! { "_value".to_string() => json!(42) }, json!({"a": 1, "b": 42}))]
+    #[case(json!([{"index": "$_index", "value": 41}, {"index": 1, "value": "$_value"}]), indexmap! { "_index".to_string() => json!(0), "_value".to_string() => json!(42) }, json!([{"index": 0, "value": 41}, {"index": 1, "value": 42}]))]
     #[case(json!({"text": { "$_text": "index: {{ _index }}, value: {{ _value }}" }}), indexmap! { "_index".to_string() => json!(0), "_value".to_string() => json!(42) }, json!({"text": "index: 0, value: 42"}))]
     fn success_cases(
         #[case] template: serde_json::Value,
@@ -129,7 +131,7 @@ mod tests {
     ) {
         let template = JsonTemplate::parse(
             template,
-            vec!["$_index".to_string(), "$_value".to_string()],
+            vec!["_index".to_string(), "_value".to_string()],
             "$_text".to_string(),
         )
         .unwrap();
