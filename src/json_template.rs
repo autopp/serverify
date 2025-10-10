@@ -24,7 +24,11 @@ impl JsonTemplate {
         value_placeholders: Vec<String>,
         text_placeholder: String,
     ) -> Result<Self, String> {
-        let placeholder_paths = Self::traverse(&template, &value_placeholders, &text_placeholder);
+        let placeholder_paths = Self::traverse(
+            &template,
+            &value_placeholders,
+            &format!("${}", text_placeholder),
+        );
 
         Ok(Self {
             template,
@@ -132,7 +136,7 @@ mod tests {
         let template = JsonTemplate::parse(
             template,
             vec!["_index".to_string(), "_value".to_string()],
-            "$_text".to_string(),
+            "_text".to_string(),
         )
         .unwrap();
         let actual = template.expand(values);
