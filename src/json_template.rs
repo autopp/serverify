@@ -1,5 +1,6 @@
 use indexmap::IndexMap;
 use minijinja::Environment;
+use regex::Regex;
 use serde_json::Value;
 
 #[derive(Clone)]
@@ -24,6 +25,15 @@ impl JsonTemplate {
         value_placeholders: Vec<String>,
         text_placeholder: String,
     ) -> Result<Self, String> {
+        // Validate arguments
+        let mut validated_names: Vec<&str> = vec![];
+        for name in value_placeholders.iter() {
+            Self::validate_placeholder_name(name, &validated_names)?;
+            validated_names.push(name);
+        }
+        Self::validate_placeholder_name(&text_placeholder, &validated_names)?;
+
+        // Parse template
         let placeholder_paths = Self::traverse(
             &template,
             &value_placeholders,
@@ -44,6 +54,24 @@ impl JsonTemplate {
         });
 
         expanded
+    }
+
+    fn validate_placeholder_name(new_name: &str, existing_names: &[&str]) -> Result<(), String> {
+        if new_name.is_empty() {
+            return Err("placeholder name cannot be empty".to_string());
+        }
+
+        if !Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*$")
+            .unwrap()
+            .is_match(new_name)
+        {
+            return Err(format!("invalid placeholder name: `{}`", new_name));
+        }
+
+        if existing_names.contains(&new_name) {
+            return Err(format!("duplicated placeholder name: `{}`", new_name));
+        }
+        Ok(())
     }
 
     fn traverse(
@@ -128,7 +156,7 @@ mod tests {
     #[case(json!({"a": 1, "b": "$_value"}), indexmap! { "_value".to_string() => json!(42) }, json!({"a": 1, "b": 42}))]
     #[case(json!([{"index": "$_index", "value": 41}, {"index": 1, "value": "$_value"}]), indexmap! { "_index".to_string() => json!(0), "_value".to_string() => json!(42) }, json!([{"index": 0, "value": 41}, {"index": 1, "value": 42}]))]
     #[case(json!({"text": { "$_text": "index: {{ _index }}, value: {{ _value }}" }}), indexmap! { "_index".to_string() => json!(0), "_value".to_string() => json!(42) }, json!({"text": "index: 0, value: 42"}))]
-    fn success_cases(
+    fn expand(
         #[case] template: serde_json::Value,
         #[case] values: IndexMap<String, Value>,
         #[case] expected: serde_json::Value,
@@ -141,5 +169,36 @@ mod tests {
         .unwrap();
         let actual = template.expand(values);
         assert_eq!(expected, actual);
+    }
+
+    mod parse {
+        use super::*;
+        use pretty_assertions::assert_eq;
+
+        #[rstest]
+        #[case(vec![""], "_text", "placeholder name cannot be empty")]
+        #[case(vec!["_value"], "", "placeholder name cannot be empty")]
+        #[case(vec!["$abc"], "_text", "invalid placeholder name: `$abc`")]
+        #[case(vec!["_value"], "0x", "invalid placeholder name: `0x`")]
+        #[case(vec!["abc", "def", "abc"], "_text", "duplicated placeholder name: `abc`")]
+        #[case(vec!["abc", "def"], "abc", "duplicated placeholder name: `abc`")]
+        fn failure_cases(
+            #[case] value_placeholders: Vec<&'static str>,
+            #[case] text_placeholder: &'static str,
+            #[case] expected_error_message: &'static str,
+        ) {
+            let template = json!({
+                "a": 1,
+                "b": "$_value",
+                "c": { "$_text": "value: {{ _value }}" },
+            });
+
+            let result = JsonTemplate::parse(
+                template,
+                value_placeholders.iter().map(|s| s.to_string()).collect(),
+                text_placeholder.to_string(),
+            );
+            assert_eq!(result, Err(expected_error_message.to_string()));
+        }
     }
 }
