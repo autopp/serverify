@@ -19,6 +19,8 @@ tests:
                           default_per_page: 2
                           page_origin: 0
                           template:
+                              summary:
+                                $_tmpl: "Total {{ _contents | length }} friends"
                               friends: $_contents
                           items:
                               - name: Alice
@@ -47,6 +49,7 @@ tests:
           stdout:
             eq_json:
               $json:
+                summary: Total 2 friends
                 friends:
                   - name: Alice
                     age: 10
@@ -67,6 +70,7 @@ tests:
           stdout:
             eq_json:
               $json:
+                summary: Total 1 friends
                 friends:
                   - name: Carol
                     age: 30
